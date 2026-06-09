@@ -1,0 +1,860 @@
+<!doctype html>
+<html lang="ja">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <title>Memo Magic Mobile</title>
+  <meta name="theme-color" content="#176f6a">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="default">
+  <meta name="apple-mobile-web-app-title" content="Memo Magic">
+  <link rel="manifest" href="manifest.webmanifest">
+  <link rel="apple-touch-icon" href="pwa-icon-192.png">
+  <link rel="icon" href="pwa-icon.svg" type="image/svg+xml">
+  <style>
+    :root {
+      color-scheme: light;
+      --bg: #f6f4ee;
+      --paper: #fffdf8;
+      --panel: #ffffff;
+      --ink: #1f2320;
+      --muted: #68706b;
+      --line: #ded8cc;
+      --main: #176f6a;
+      --main-deep: #0f4d4a;
+      --accent: #b7622d;
+      --soft: #e8f2ef;
+      --warn: #fff2d5;
+      --danger: #b94242;
+      --shadow: 0 14px 32px rgba(38, 35, 28, .11);
+      font-family: "Yu Gothic UI", "Meiryo", system-ui, -apple-system, BlinkMacSystemFont, sans-serif;
+    }
+
+    * { box-sizing: border-box; }
+    html { background: var(--bg); }
+    body {
+      min-width: 320px;
+      margin: 0;
+      color: var(--ink);
+      background:
+        linear-gradient(180deg, rgba(23, 111, 106, .08), transparent 280px),
+        var(--bg);
+      -webkit-text-size-adjust: 100%;
+    }
+    button, input, select, textarea { font: inherit; }
+    button {
+      border: 0;
+      cursor: pointer;
+      touch-action: manipulation;
+      -webkit-tap-highlight-color: transparent;
+    }
+    h1, h2, h3, p { margin: 0; }
+
+    .app {
+      width: min(920px, 100%);
+      min-height: 100svh;
+      margin: 0 auto;
+      padding: 0 12px calc(88px + env(safe-area-inset-bottom));
+    }
+    header {
+      position: sticky;
+      top: 0;
+      z-index: 10;
+      margin: 0 -12px 12px;
+      padding: calc(10px + env(safe-area-inset-top)) 12px 10px;
+      background: rgba(246, 244, 238, .88);
+      border-bottom: 1px solid rgba(222, 216, 204, .78);
+      backdrop-filter: blur(18px);
+    }
+    .head {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 10px;
+    }
+    h1 {
+      font-size: 22px;
+      line-height: 1.18;
+      letter-spacing: 0;
+      font-weight: 950;
+    }
+    .caption {
+      margin-top: 4px;
+      color: var(--muted);
+      font-size: 12px;
+      line-height: 1.45;
+    }
+    .count {
+      min-width: 62px;
+      padding: 8px 10px;
+      border-radius: 8px;
+      background: var(--main);
+      color: #fff;
+      text-align: center;
+      font-size: 12px;
+      font-weight: 900;
+      line-height: 1.2;
+      box-shadow: 0 10px 22px rgba(23, 111, 106, .2);
+    }
+
+    .view { display: none; }
+    .view.active { display: grid; gap: 12px; }
+    .panel {
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      background: var(--panel);
+      box-shadow: var(--shadow);
+    }
+    .section { padding: 14px; }
+    .stack { display: grid; gap: 10px; }
+    .row { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+    .triad {
+      display: grid;
+      grid-template-columns: repeat(3, 1fr);
+      gap: 7px;
+    }
+    .step {
+      min-height: 58px;
+      padding: 8px;
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      background: var(--paper);
+    }
+    .step strong {
+      display: block;
+      color: var(--main);
+      font-size: 12px;
+      line-height: 1.2;
+    }
+    .step span {
+      display: block;
+      margin-top: 3px;
+      color: var(--muted);
+      font-size: 11px;
+      line-height: 1.3;
+    }
+    .field { display: grid; gap: 6px; }
+    label {
+      color: var(--muted);
+      font-size: 12px;
+      font-weight: 900;
+    }
+    input, select, textarea {
+      width: 100%;
+      min-height: 50px;
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      padding: 12px;
+      background: var(--paper);
+      color: var(--ink);
+      font-size: 16px;
+      outline: none;
+    }
+    textarea {
+      min-height: 92px;
+      resize: vertical;
+      line-height: 1.55;
+    }
+    textarea.big { min-height: 120px; }
+    input:focus, select:focus, textarea:focus {
+      border-color: rgba(23, 111, 106, .65);
+      box-shadow: 0 0 0 3px rgba(23, 111, 106, .12);
+    }
+    .btn {
+      min-height: 48px;
+      border-radius: 8px;
+      padding: 11px 12px;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      gap: 6px;
+      background: #efe9dc;
+      color: var(--ink);
+      border: 1px solid rgba(31, 35, 32, .1);
+      font-size: 15px;
+      font-weight: 900;
+      line-height: 1.2;
+    }
+    .btn.primary {
+      background: var(--main);
+      color: #fff;
+      box-shadow: 0 12px 22px rgba(23, 111, 106, .2);
+    }
+    .btn.secondary {
+      background: var(--accent);
+      color: #fff;
+    }
+    .btn.ghost { background: var(--paper); }
+    .btn.danger {
+      background: rgba(185, 66, 66, .1);
+      color: var(--danger);
+      border-color: rgba(185, 66, 66, .25);
+    }
+    .btn.small {
+      min-height: 36px;
+      padding: 7px 9px;
+      font-size: 12px;
+    }
+    .toolbar {
+      display: grid;
+      grid-template-columns: 1fr auto;
+      gap: 8px;
+    }
+    .filters {
+      display: grid;
+      grid-template-columns: 1fr 128px;
+      gap: 8px;
+    }
+    .memo-list {
+      display: grid;
+      gap: 10px;
+    }
+    .memo-card {
+      display: grid;
+      gap: 9px;
+      padding: 13px;
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      background: var(--panel);
+      box-shadow: 0 10px 24px rgba(38, 35, 28, .07);
+    }
+    .memo-title {
+      font-size: 17px;
+      font-weight: 950;
+      line-height: 1.35;
+      overflow-wrap: anywhere;
+    }
+    .memo-meta {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 6px;
+      color: var(--muted);
+      font-size: 12px;
+      line-height: 1.3;
+    }
+    .pill {
+      padding: 5px 8px;
+      border-radius: 999px;
+      background: var(--soft);
+      color: var(--main-deep);
+      font-size: 12px;
+      font-weight: 900;
+      line-height: 1.2;
+      overflow-wrap: anywhere;
+    }
+    .memo-body {
+      display: grid;
+      gap: 7px;
+      color: var(--muted);
+      font-size: 13px;
+      line-height: 1.55;
+      overflow-wrap: anywhere;
+    }
+    .memo-body b { color: var(--ink); }
+    .memo-actions {
+      display: grid;
+      grid-template-columns: 1fr 1fr 1fr;
+      gap: 7px;
+    }
+    .empty {
+      padding: 18px 14px;
+      border: 1px dashed var(--line);
+      border-radius: 8px;
+      background: rgba(255, 253, 248, .72);
+      color: var(--muted);
+      font-size: 14px;
+      line-height: 1.6;
+      text-align: center;
+    }
+    .prompt-card {
+      display: grid;
+      gap: 12px;
+      padding: 16px;
+      border: 1px solid rgba(183, 98, 45, .25);
+      border-radius: 8px;
+      background: linear-gradient(180deg, #fffaf0, #fff);
+      box-shadow: var(--shadow);
+    }
+    .prompt-card h2 {
+      color: var(--accent);
+      font-size: 14px;
+      line-height: 1.2;
+    }
+    .prompt-text {
+      min-height: 112px;
+      display: grid;
+      align-items: center;
+      font-size: clamp(24px, 8vw, 38px);
+      line-height: 1.22;
+      font-weight: 950;
+      letter-spacing: 0;
+      overflow-wrap: anywhere;
+    }
+    .hint {
+      color: var(--muted);
+      font-size: 13px;
+      line-height: 1.55;
+    }
+    .settings-grid { display: grid; gap: 10px; }
+    .backup {
+      width: 100%;
+      min-height: 150px;
+      font-family: ui-monospace, SFMono-Regular, Consolas, monospace;
+      font-size: 12px;
+      word-break: break-all;
+    }
+    .notice {
+      display: none;
+      padding: 10px 12px;
+      border-radius: 8px;
+      background: var(--warn);
+      color: #6f4a06;
+      font-size: 13px;
+      font-weight: 900;
+      line-height: 1.45;
+    }
+    .notice.show { display: block; }
+
+    nav {
+      position: fixed;
+      left: 0;
+      right: 0;
+      bottom: 0;
+      z-index: 20;
+      padding: 8px 10px calc(8px + env(safe-area-inset-bottom));
+      background: rgba(255, 253, 248, .92);
+      border-top: 1px solid rgba(222, 216, 204, .9);
+      backdrop-filter: blur(18px);
+    }
+    .tabs {
+      width: min(920px, 100%);
+      margin: 0 auto;
+      display: grid;
+      grid-template-columns: repeat(4, 1fr);
+      gap: 6px;
+    }
+    .tab {
+      min-height: 52px;
+      border-radius: 8px;
+      background: transparent;
+      color: var(--muted);
+      font-size: 12px;
+      font-weight: 900;
+      line-height: 1.2;
+    }
+    .tab.active {
+      background: var(--main);
+      color: #fff;
+      box-shadow: 0 10px 22px rgba(23, 111, 106, .18);
+    }
+
+    @media (min-width: 760px) {
+      .app { padding-top: 12px; }
+      .desk-grid {
+        display: grid;
+        grid-template-columns: minmax(0, .95fr) minmax(0, 1.05fr);
+        gap: 12px;
+      }
+      .prompt-text { min-height: 150px; }
+    }
+    @media (max-width: 380px) {
+      .filters { grid-template-columns: 1fr; }
+      .memo-actions { grid-template-columns: 1fr; }
+      .triad { grid-template-columns: 1fr; }
+      h1 { font-size: 20px; }
+    }
+  </style>
+</head>
+<body>
+  <div class="app">
+    <header>
+      <div class="head">
+        <div>
+          <h1>Memo Magic</h1>
+          <p class="caption">事実を見つけ、抽象化し、今日の行動へ落とすメモ帳</p>
+        </div>
+        <div class="count" id="memoCount">0件</div>
+      </div>
+    </header>
+
+    <main>
+      <section class="view active" id="writeView">
+        <div class="desk-grid">
+          <form class="panel section stack" id="memoForm">
+            <input type="hidden" id="memoId">
+            <div class="triad" aria-label="メモの流れ">
+              <div class="step"><strong>事実</strong><span>見たこと、聞いたこと</span></div>
+              <div class="step"><strong>抽象化</strong><span>つまり何が言えるか</span></div>
+              <div class="step"><strong>転用</strong><span>自分なら何をするか</span></div>
+            </div>
+            <div class="field">
+              <label for="titleInput">タイトル</label>
+              <input id="titleInput" autocomplete="off" placeholder="例: 今日の会議で刺さった一言">
+            </div>
+            <div class="field">
+              <label for="factInput">事実</label>
+              <textarea class="big" id="factInput" placeholder="具体的な出来事、発言、観察を書きます"></textarea>
+            </div>
+            <div class="field">
+              <label for="abstractInput">抽象化</label>
+              <textarea id="abstractInput" placeholder="共通点、構造、学び、原理を書きます"></textarea>
+            </div>
+            <div class="field">
+              <label for="actionInput">転用 / 次の行動</label>
+              <textarea id="actionInput" placeholder="今日・今週の自分の行動へ変換します"></textarea>
+            </div>
+            <div class="row">
+              <div class="field">
+                <label for="tagInput">タグ</label>
+                <input id="tagInput" autocomplete="off" placeholder="仕事, 学び">
+              </div>
+              <div class="field">
+                <label for="statusInput">状態</label>
+                <select id="statusInput">
+                  <option value="idea">メモ</option>
+                  <option value="next">次やる</option>
+                  <option value="done">完了</option>
+                </select>
+              </div>
+            </div>
+            <div class="notice" id="formNotice"></div>
+            <div class="row">
+              <button class="btn ghost" type="button" id="clearBtn">新規</button>
+              <button class="btn primary" type="submit">保存</button>
+            </div>
+          </form>
+
+          <section class="panel section stack">
+            <div class="toolbar">
+              <div class="field">
+                <label for="quickInput">1行メモ</label>
+                <input id="quickInput" autocomplete="off" placeholder="一瞬で残す">
+              </div>
+              <button class="btn secondary" id="quickBtn" type="button">追加</button>
+            </div>
+            <p class="hint">1行メモは「事実」に入り、あとから抽象化と転用を追記できます。</p>
+            <div class="prompt-card">
+              <h2>問い</h2>
+              <div class="prompt-text" id="homePrompt"></div>
+              <button class="btn ghost" id="homePromptBtn" type="button">別の問い</button>
+            </div>
+          </section>
+        </div>
+      </section>
+
+      <section class="view" id="listView">
+        <section class="panel section stack">
+          <div class="filters">
+            <input id="searchInput" autocomplete="off" placeholder="検索">
+            <select id="filterInput">
+              <option value="all">すべて</option>
+              <option value="idea">メモ</option>
+              <option value="next">次やる</option>
+              <option value="done">完了</option>
+            </select>
+          </div>
+          <div class="memo-list" id="memoList"></div>
+        </section>
+      </section>
+
+      <section class="view" id="promptView">
+        <div class="prompt-card">
+          <h2>自分を掘る問い</h2>
+          <div class="prompt-text" id="promptText"></div>
+          <div class="row">
+            <button class="btn ghost" id="promptShuffleBtn" type="button">次の問い</button>
+            <button class="btn primary" id="promptUseBtn" type="button">この問いで書く</button>
+          </div>
+        </div>
+        <section class="panel section stack">
+          <h2>問いリスト</h2>
+          <div class="memo-list" id="promptList"></div>
+        </section>
+      </section>
+
+      <section class="view" id="settingsView">
+        <section class="panel section settings-grid">
+          <h2>バックアップ</h2>
+          <button class="btn primary" id="exportBtn" type="button">JSONを書き出す</button>
+          <textarea class="backup" id="backupText" placeholder="ここにバックアップJSONが表示されます。読み込む場合はJSONを貼り付けてください。"></textarea>
+          <div class="row">
+            <button class="btn ghost" id="copyBtn" type="button">コピー</button>
+            <button class="btn secondary" id="importBtn" type="button">読み込む</button>
+          </div>
+          <div class="notice" id="settingsNotice"></div>
+        </section>
+        <section class="panel section stack">
+          <h2>プライバシー</h2>
+          <p class="hint">入力したメモはこの端末のブラウザ内 `localStorage` に保存されます。外部API、CDN、外部画像、外部スクリプトは使っていません。</p>
+          <button class="btn danger" id="wipeBtn" type="button">全データ削除</button>
+        </section>
+      </section>
+    </main>
+  </div>
+
+  <nav aria-label="画面切替">
+    <div class="tabs">
+      <button class="tab active" data-view="writeView" type="button">書く</button>
+      <button class="tab" data-view="listView" type="button">一覧</button>
+      <button class="tab" data-view="promptView" type="button">問い</button>
+      <button class="tab" data-view="settingsView" type="button">設定</button>
+    </div>
+  </nav>
+
+  <script>
+    const storeKey = "memoMagicMobile.v1";
+    const prompts = [
+      "心が動いたのは、なぜ？",
+      "今日いちばん学びがあった事実は？",
+      "それは他の場面にも当てはまる？",
+      "自分の強みとして再現できることは？",
+      "誰のどんな課題を解けそう？",
+      "この違和感を一言で言うと？",
+      "理想の自分なら次に何をする？",
+      "5分で試せる小さな行動は？",
+      "過去の成功体験と似ている点は？",
+      "仕事に転用すると何が変わる？",
+      "相手の本音はどこにありそう？",
+      "この経験から作れるルールは？"
+    ];
+
+    const state = {
+      memos: [],
+      promptIndex: 0
+    };
+
+    const el = (id) => document.getElementById(id);
+    const form = el("memoForm");
+    const fields = {
+      id: el("memoId"),
+      title: el("titleInput"),
+      fact: el("factInput"),
+      abstraction: el("abstractInput"),
+      action: el("actionInput"),
+      tags: el("tagInput"),
+      status: el("statusInput")
+    };
+
+    function load() {
+      try {
+        const saved = JSON.parse(localStorage.getItem(storeKey) || "[]");
+        state.memos = Array.isArray(saved) ? saved : [];
+      } catch {
+        state.memos = [];
+      }
+      state.promptIndex = Math.floor(Math.random() * prompts.length);
+    }
+
+    function save() {
+      localStorage.setItem(storeKey, JSON.stringify(state.memos));
+      render();
+    }
+
+    function uid() {
+      return Date.now().toString(36) + Math.random().toString(36).slice(2, 8);
+    }
+
+    function dateLabel(value) {
+      return new Intl.DateTimeFormat("ja-JP", {
+        month: "numeric",
+        day: "numeric",
+        hour: "2-digit",
+        minute: "2-digit"
+      }).format(new Date(value));
+    }
+
+    function statusLabel(value) {
+      return ({ idea: "メモ", next: "次やる", done: "完了" })[value] || "メモ";
+    }
+
+    function escapeHtml(value) {
+      return String(value || "").replace(/[&<>"']/g, (char) => ({
+        "&": "&amp;",
+        "<": "&lt;",
+        ">": "&gt;",
+        "\"": "&quot;",
+        "'": "&#039;"
+      })[char]);
+    }
+
+    function splitTags(value) {
+      return String(value || "")
+        .split(/[,\s、]+/)
+        .map((tag) => tag.trim())
+        .filter(Boolean);
+    }
+
+    function currentPrompt() {
+      return prompts[state.promptIndex % prompts.length];
+    }
+
+    function showNotice(target, message) {
+      target.textContent = message;
+      target.classList.add("show");
+      window.setTimeout(() => target.classList.remove("show"), 2200);
+    }
+
+    function clearForm() {
+      fields.id.value = "";
+      fields.title.value = "";
+      fields.fact.value = "";
+      fields.abstraction.value = "";
+      fields.action.value = "";
+      fields.tags.value = "";
+      fields.status.value = "idea";
+      fields.title.focus();
+    }
+
+    function formToMemo() {
+      const now = new Date().toISOString();
+      const existing = state.memos.find((memo) => memo.id === fields.id.value);
+      return {
+        id: fields.id.value || uid(),
+        title: fields.title.value.trim() || "無題のメモ",
+        fact: fields.fact.value.trim(),
+        abstraction: fields.abstraction.value.trim(),
+        action: fields.action.value.trim(),
+        tags: splitTags(fields.tags.value),
+        status: fields.status.value,
+        createdAt: existing?.createdAt || now,
+        updatedAt: now
+      };
+    }
+
+    function editMemo(id) {
+      const memo = state.memos.find((item) => item.id === id);
+      if (!memo) return;
+      fields.id.value = memo.id;
+      fields.title.value = memo.title;
+      fields.fact.value = memo.fact || "";
+      fields.abstraction.value = memo.abstraction || "";
+      fields.action.value = memo.action || "";
+      fields.tags.value = (memo.tags || []).join(", ");
+      fields.status.value = memo.status || "idea";
+      switchView("writeView");
+      fields.fact.focus();
+    }
+
+    function duplicateMemo(id) {
+      const memo = state.memos.find((item) => item.id === id);
+      if (!memo) return;
+      state.memos.unshift({
+        ...memo,
+        id: uid(),
+        title: memo.title + " コピー",
+        status: "idea",
+        createdAt: new Date().toISOString(),
+        updatedAt: new Date().toISOString()
+      });
+      save();
+    }
+
+    function deleteMemo(id) {
+      if (!confirm("このメモを削除しますか？")) return;
+      state.memos = state.memos.filter((item) => item.id !== id);
+      save();
+    }
+
+    function setMemoStatus(id, status) {
+      const memo = state.memos.find((item) => item.id === id);
+      if (!memo) return;
+      memo.status = status;
+      memo.updatedAt = new Date().toISOString();
+      save();
+    }
+
+    function filteredMemos() {
+      const query = el("searchInput").value.trim().toLowerCase();
+      const filter = el("filterInput").value;
+      return state.memos.filter((memo) => {
+        const statusMatch = filter === "all" || memo.status === filter;
+        const haystack = [
+          memo.title,
+          memo.fact,
+          memo.abstraction,
+          memo.action,
+          ...(memo.tags || [])
+        ].join(" ").toLowerCase();
+        return statusMatch && (!query || haystack.includes(query));
+      });
+    }
+
+    function memoCard(memo) {
+      const tags = (memo.tags || []).map((tag) => `<span class="pill">#${escapeHtml(tag)}</span>`).join("");
+      return `
+        <article class="memo-card">
+          <div class="memo-meta">
+            <span class="pill">${statusLabel(memo.status)}</span>
+            <span>${dateLabel(memo.updatedAt || memo.createdAt)}</span>
+            ${tags}
+          </div>
+          <h3 class="memo-title">${escapeHtml(memo.title)}</h3>
+          <div class="memo-body">
+            ${memo.fact ? `<p><b>事実:</b> ${escapeHtml(memo.fact)}</p>` : ""}
+            ${memo.abstraction ? `<p><b>抽象化:</b> ${escapeHtml(memo.abstraction)}</p>` : ""}
+            ${memo.action ? `<p><b>転用:</b> ${escapeHtml(memo.action)}</p>` : ""}
+          </div>
+          <div class="memo-actions">
+            <button class="btn small ghost" data-action="edit" data-id="${memo.id}" type="button">編集</button>
+            <button class="btn small ghost" data-action="next" data-id="${memo.id}" type="button">次やる</button>
+            <button class="btn small danger" data-action="delete" data-id="${memo.id}" type="button">削除</button>
+          </div>
+        </article>
+      `;
+    }
+
+    function renderList() {
+      const list = el("memoList");
+      const memos = filteredMemos();
+      list.innerHTML = memos.length
+        ? memos.map(memoCard).join("")
+        : `<div class="empty">まだメモがありません。気になった事実を1つだけ残してください。</div>`;
+    }
+
+    function renderPrompts() {
+      el("homePrompt").textContent = currentPrompt();
+      el("promptText").textContent = currentPrompt();
+      el("promptList").innerHTML = prompts.map((prompt) => `
+        <button class="btn ghost" data-prompt="${escapeHtml(prompt)}" type="button">${escapeHtml(prompt)}</button>
+      `).join("");
+    }
+
+    function render() {
+      el("memoCount").textContent = `${state.memos.length}件`;
+      renderList();
+      renderPrompts();
+    }
+
+    function switchView(viewId) {
+      document.querySelectorAll(".view").forEach((view) => view.classList.toggle("active", view.id === viewId));
+      document.querySelectorAll(".tab").forEach((tab) => tab.classList.toggle("active", tab.dataset.view === viewId));
+      window.scrollTo({ top: 0, behavior: "smooth" });
+    }
+
+    function shufflePrompt() {
+      state.promptIndex = (state.promptIndex + 1 + Math.floor(Math.random() * (prompts.length - 1))) % prompts.length;
+      renderPrompts();
+    }
+
+    form.addEventListener("submit", (event) => {
+      event.preventDefault();
+      const memo = formToMemo();
+      if (!memo.fact && !memo.abstraction && !memo.action) {
+        showNotice(el("formNotice"), "事実、抽象化、転用のどれかを入力してください。");
+        return;
+      }
+      const index = state.memos.findIndex((item) => item.id === memo.id);
+      if (index >= 0) state.memos[index] = memo;
+      else state.memos.unshift(memo);
+      save();
+      clearForm();
+      showNotice(el("formNotice"), "保存しました。");
+    });
+
+    el("clearBtn").addEventListener("click", clearForm);
+    el("quickBtn").addEventListener("click", () => {
+      const value = el("quickInput").value.trim();
+      if (!value) return;
+      state.memos.unshift({
+        id: uid(),
+        title: value.slice(0, 28),
+        fact: value,
+        abstraction: "",
+        action: "",
+        tags: [],
+        status: "idea",
+        createdAt: new Date().toISOString(),
+        updatedAt: new Date().toISOString()
+      });
+      el("quickInput").value = "";
+      save();
+    });
+
+    el("memoList").addEventListener("click", (event) => {
+      const button = event.target.closest("button");
+      if (!button) return;
+      const id = button.dataset.id;
+      if (button.dataset.action === "edit") editMemo(id);
+      if (button.dataset.action === "next") setMemoStatus(id, "next");
+      if (button.dataset.action === "delete") deleteMemo(id);
+    });
+
+    document.querySelectorAll(".tab").forEach((tab) => {
+      tab.addEventListener("click", () => switchView(tab.dataset.view));
+    });
+    el("searchInput").addEventListener("input", renderList);
+    el("filterInput").addEventListener("change", renderList);
+    el("homePromptBtn").addEventListener("click", shufflePrompt);
+    el("promptShuffleBtn").addEventListener("click", shufflePrompt);
+    el("promptUseBtn").addEventListener("click", () => {
+      fields.title.value = currentPrompt();
+      fields.fact.value = currentPrompt();
+      switchView("writeView");
+      fields.fact.focus();
+    });
+    el("promptList").addEventListener("click", (event) => {
+      const button = event.target.closest("button");
+      if (!button) return;
+      fields.title.value = button.dataset.prompt;
+      fields.fact.value = button.dataset.prompt;
+      switchView("writeView");
+      fields.fact.focus();
+    });
+
+    el("exportBtn").addEventListener("click", () => {
+      el("backupText").value = JSON.stringify(state.memos, null, 2);
+      showNotice(el("settingsNotice"), "バックアップJSONを作成しました。");
+    });
+    el("copyBtn").addEventListener("click", async () => {
+      const value = el("backupText").value;
+      if (!value) return;
+      try {
+        await navigator.clipboard.writeText(value);
+        showNotice(el("settingsNotice"), "コピーしました。");
+      } catch {
+        showNotice(el("settingsNotice"), "コピーできない場合は手動で選択してください。");
+      }
+    });
+    el("importBtn").addEventListener("click", () => {
+      try {
+        const imported = JSON.parse(el("backupText").value || "[]");
+        if (!Array.isArray(imported)) throw new Error("invalid");
+        state.memos = imported.map((memo) => ({
+          id: memo.id || uid(),
+          title: memo.title || "無題のメモ",
+          fact: memo.fact || "",
+          abstraction: memo.abstraction || "",
+          action: memo.action || "",
+          tags: Array.isArray(memo.tags) ? memo.tags : splitTags(memo.tags),
+          status: memo.status || "idea",
+          createdAt: memo.createdAt || new Date().toISOString(),
+          updatedAt: memo.updatedAt || new Date().toISOString()
+        }));
+        save();
+        showNotice(el("settingsNotice"), "読み込みました。");
+      } catch {
+        showNotice(el("settingsNotice"), "JSONの形式を確認してください。");
+      }
+    });
+    el("wipeBtn").addEventListener("click", () => {
+      if (!confirm("すべてのメモを削除しますか？")) return;
+      state.memos = [];
+      save();
+      showNotice(el("settingsNotice"), "削除しました。");
+    });
+
+    if ("serviceWorker" in navigator) {
+      const isLocalhost = ["localhost", "127.0.0.1", "[::1]"].includes(location.hostname);
+      const canUseServiceWorker = location.protocol === "https:" || isLocalhost;
+      if (canUseServiceWorker) {
+        window.addEventListener("load", () => {
+          navigator.serviceWorker.register("service-worker.js").catch(() => {});
+        });
+      }
+    }
+
+    load();
+    render();
+  </script>
+</body>
+</html>

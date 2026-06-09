@@ -1,0 +1,10 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" role="img" aria-label="Memo Magic icon">
+  <rect width="512" height="512" rx="108" fill="#176f6a"/>
+  <path d="M138 116h236c20 0 36 16 36 36v208c0 20-16 36-36 36H138c-20 0-36-16-36-36V152c0-20 16-36 36-36Z" fill="#fffdf8"/>
+  <path d="M154 170h204" stroke="#176f6a" stroke-width="22" stroke-linecap="round"/>
+  <path d="M154 232h170" stroke="#b7622d" stroke-width="22" stroke-linecap="round"/>
+  <path d="M154 294h130" stroke="#176f6a" stroke-width="22" stroke-linecap="round"/>
+  <path d="M331 275l26 22 42-58" fill="none" stroke="#b7622d" stroke-width="24" stroke-linecap="round" stroke-linejoin="round"/>
+  <circle cx="374" cy="154" r="18" fill="#b7622d"/>
+  <circle cx="334" cy="358" r="13" fill="#176f6a"/>
+</svg>
