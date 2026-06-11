@@ -224,6 +224,15 @@
       line-height: 1.35;
       overflow-wrap: anywhere;
     }
+    .memo-summary {
+      margin: -2px 0 0;
+      color: var(--main-deep);
+      font-size: 14px;
+      font-weight: 850;
+      line-height: 1.45;
+      overflow-wrap: anywhere;
+      white-space: pre-wrap;
+    }
     .memo-meta {
       display: flex;
       flex-wrap: wrap;
@@ -537,6 +546,10 @@
               <input id="titleInput" autocomplete="off" placeholder="例: 今日の会議で刺さった一言">
             </div>
             <div class="field">
+              <label for="summaryInput">一言サマリー</label>
+              <input id="summaryInput" autocomplete="off" placeholder="例: 意思決定は早さより前提合わせ">
+            </div>
+            <div class="field">
               <label for="factInput">事実</label>
               <textarea class="big" id="factInput" autocomplete="off" autocapitalize="off" spellcheck="false" placeholder="具体的な出来事、発言、観察を書きます"></textarea>
             </div>
@@ -700,6 +713,7 @@
     const fields = {
       id: el("memoId"),
       title: el("titleInput"),
+      summary: el("summaryInput"),
       fact: el("factInput"),
       abstraction: el("abstractInput"),
       action: el("actionInput"),
@@ -1115,6 +1129,7 @@
     function clearForm() {
       fields.id.value = "";
       fields.title.value = "";
+      fields.summary.value = "";
       fields.fact.value = "";
       fields.abstraction.value = "";
       fields.action.value = "";
@@ -1129,6 +1144,7 @@
       return {
         id: fields.id.value || uid(),
         title: fields.title.value.trim() || "無題のメモ",
+        summary: fields.summary.value.trim(),
         fact: fields.fact.value.trim(),
         abstraction: fields.abstraction.value.trim(),
         action: fields.action.value.trim(),
@@ -1144,6 +1160,7 @@
       if (!memo) return;
       fields.id.value = memo.id;
       fields.title.value = memo.title;
+      fields.summary.value = memo.summary || "";
       fields.fact.value = memo.fact || "";
       fields.abstraction.value = memo.abstraction || "";
       fields.action.value = memo.action || "";
@@ -1192,6 +1209,7 @@
       `;
       el("detailTitle").textContent = memo.title;
       el("detailScroll").innerHTML = [
+        ["一言サマリー", memo.summary],
         ["事実", memo.fact],
         ["抽象化", memo.abstraction],
         ["転用 / 次の行動", memo.action]
@@ -1219,6 +1237,7 @@
         const statusMatch = filter === "all" || memo.status === filter;
         const haystack = [
           memo.title,
+          memo.summary,
           memo.fact,
           memo.abstraction,
           memo.action,
@@ -1238,6 +1257,7 @@
             ${tags}
           </div>
           <h3 class="memo-title">${escapeHtml(memo.title)}</h3>
+          ${memo.summary ? `<p class="memo-summary">${escapeHtml(memo.summary)}</p>` : ""}
           <div class="memo-body">
             ${memo.fact ? `<p><b>事実:</b> ${escapeHtml(memo.fact)}</p>` : ""}
             ${memo.abstraction ? `<p><b>抽象化:</b> ${escapeHtml(memo.abstraction)}</p>` : ""}
@@ -1289,8 +1309,8 @@
     form.addEventListener("submit", (event) => {
       event.preventDefault();
       const memo = formToMemo();
-      if (!memo.fact && !memo.abstraction && !memo.action) {
-        showNotice(el("formNotice"), "事実、抽象化、転用のどれかを入力してください。");
+      if (!memo.summary && !memo.fact && !memo.abstraction && !memo.action) {
+        showNotice(el("formNotice"), "一言サマリー、事実、抽象化、転用のどれかを入力してください。");
         return;
       }
       const index = state.memos.findIndex((item) => item.id === memo.id);
@@ -1308,6 +1328,7 @@
       state.memos.unshift({
         id: uid(),
         title: value.slice(0, 28),
+        summary: "",
         fact: value,
         abstraction: "",
         action: "",
@@ -1373,6 +1394,7 @@
         state.memos = imported.map((memo) => ({
           id: memo.id || uid(),
           title: memo.title || "無題のメモ",
+          summary: memo.summary || "",
           fact: memo.fact || "",
           abstraction: memo.abstraction || "",
           action: memo.action || "",
