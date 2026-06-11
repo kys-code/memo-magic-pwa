@@ -262,15 +262,6 @@
       grid-template-columns: repeat(4, 1fr);
       gap: 7px;
     }
-    body.privacy-editing .private-field:not(:focus) {
-      color: transparent;
-      text-shadow: 0 0 9px rgba(31, 35, 32, .58);
-      caret-color: var(--ink);
-    }
-    body.privacy-editing .private-field::placeholder {
-      color: var(--muted);
-      text-shadow: none;
-    }
     .empty {
       padding: 18px 14px;
       border: 1px dashed var(--line);
@@ -533,7 +524,6 @@
         <div class="desk-grid">
           <form class="panel section stack" id="memoForm">
             <input type="hidden" id="memoId">
-            <button class="btn ghost" id="privacyToggleBtn" type="button">入力を表示</button>
             <div class="triad" aria-label="メモの流れ">
               <div class="step"><strong>事実</strong><span>見たこと、聞いたこと</span></div>
               <div class="step"><strong>抽象化</strong><span>つまり何が言えるか</span></div>
@@ -541,19 +531,19 @@
             </div>
             <div class="field">
               <label for="titleInput">タイトル</label>
-              <input class="private-field" id="titleInput" autocomplete="off" placeholder="例: 今日の会議で刺さった一言">
+              <input id="titleInput" autocomplete="off" placeholder="例: 今日の会議で刺さった一言">
             </div>
             <div class="field">
               <label for="factInput">事実</label>
-              <textarea class="big private-field" id="factInput" autocomplete="off" autocapitalize="off" spellcheck="false" placeholder="具体的な出来事、発言、観察を書きます"></textarea>
+              <textarea class="big" id="factInput" autocomplete="off" autocapitalize="off" spellcheck="false" placeholder="具体的な出来事、発言、観察を書きます"></textarea>
             </div>
             <div class="field">
               <label for="abstractInput">抽象化</label>
-              <textarea class="private-field" id="abstractInput" autocomplete="off" autocapitalize="off" spellcheck="false" placeholder="共通点、構造、学び、原理を書きます"></textarea>
+              <textarea id="abstractInput" autocomplete="off" autocapitalize="off" spellcheck="false" placeholder="共通点、構造、学び、原理を書きます"></textarea>
             </div>
             <div class="field">
               <label for="actionInput">転用 / 次の行動</label>
-              <textarea class="private-field" id="actionInput" autocomplete="off" autocapitalize="off" spellcheck="false" placeholder="今日・今週の自分の行動へ変換します"></textarea>
+              <textarea id="actionInput" autocomplete="off" autocapitalize="off" spellcheck="false" placeholder="今日・今週の自分の行動へ変換します"></textarea>
             </div>
             <div class="row">
               <div class="field">
@@ -628,7 +618,7 @@
         <section class="panel section settings-grid">
           <h2>バックアップ</h2>
           <button class="btn primary" id="exportBtn" type="button">JSONを書き出す</button>
-          <textarea class="backup private-field" id="backupText" autocomplete="off" autocapitalize="off" spellcheck="false" placeholder="ここにバックアップJSONが表示されます。読み込む場合はJSONを貼り付けてください。"></textarea>
+          <textarea class="backup" id="backupText" autocomplete="off" autocapitalize="off" spellcheck="false" placeholder="ここにバックアップJSONが表示されます。読み込む場合はJSONを貼り付けてください。"></textarea>
           <div class="row">
             <button class="btn ghost" id="copyBtn" type="button">コピー</button>
             <button class="btn secondary" id="importBtn" type="button">読み込む</button>
@@ -677,7 +667,6 @@
     const storeKey = "memoMagicMobile.v1";
     const secureMetaKey = "memoMagicMobile.secure.v1";
     const encryptedStoreKey = "memoMagicMobile.encrypted.v1";
-    const privacyEditingKey = "memoMagicMobile.privacyEditing.v1";
     const faceDeviceKey = "memoMagicMobile.faceDeviceKey.v1";
     const pbkdf2Iterations = 260000;
     const prompts = [
@@ -700,7 +689,6 @@
       promptIndex: 0,
       cryptoKey: null,
       unlocked: false,
-      privacyEditing: true,
       unlockMethod: "locked"
     };
 
@@ -1072,7 +1060,6 @@
         showLockNotice("暗号化保存にはHTTPSのURLで開く必要があります。");
         return;
       }
-      loadPrivacyEditing();
       setLockMode(getSecureMeta() ? "unlock" : "setup");
       updateSecurityState();
       autoStartFaceUnlock();
@@ -1120,22 +1107,6 @@
       target.textContent = message;
       target.classList.add("show");
       window.setTimeout(() => target.classList.remove("show"), 2200);
-    }
-
-    function applyPrivacyEditing() {
-      document.body.classList.toggle("privacy-editing", state.privacyEditing);
-      el("privacyToggleBtn").textContent = state.privacyEditing ? "入力を表示" : "入力を隠す";
-    }
-
-    function loadPrivacyEditing() {
-      state.privacyEditing = localStorage.getItem(privacyEditingKey) !== "off";
-      applyPrivacyEditing();
-    }
-
-    function togglePrivacyEditing() {
-      state.privacyEditing = !state.privacyEditing;
-      localStorage.setItem(privacyEditingKey, state.privacyEditing ? "on" : "off");
-      applyPrivacyEditing();
     }
 
     function clearForm() {
@@ -1419,7 +1390,6 @@
       save();
       showNotice(el("settingsNotice"), "削除しました。");
     });
-    el("privacyToggleBtn").addEventListener("click", togglePrivacyEditing);
     el("detailCloseBtn").addEventListener("click", closeMemoDetail);
     el("detailSheet").addEventListener("click", (event) => {
       if (event.target.id === "detailSheet") closeMemoDetail();
