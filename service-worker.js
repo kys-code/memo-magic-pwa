@@ -1,4 +1,4 @@
-const CACHE_NAME = "memo-magic-mobile-v6";
+const CACHE_NAME = "memo-magic-mobile-v7";
 const APP_SHELL = [
   "./memo-magic-mobile.html",
   "./manifest.webmanifest",

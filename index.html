@@ -830,6 +830,11 @@
       el("enableFaceIdBtn").style.display = state.unlocked && !faceEnabled ? "inline-flex" : "none";
     }
 
+    function hasFaceUnlock() {
+      const meta = getSecureMeta();
+      return Boolean(meta?.face?.credentialId && meta?.face?.wrappedVaultKey && localStorage.getItem(faceDeviceKey));
+    }
+
     function setLockMode(mode) {
       const hasVault = Boolean(getSecureMeta());
       el("pinConfirmField").style.display = mode === "setup" ? "grid" : "none";
@@ -1029,6 +1034,16 @@
       }
     }
 
+    function autoStartFaceUnlock() {
+      if (!hasFaceUnlock()) return;
+      el("lockCaption").textContent = "Face IDで解除しています";
+      window.setTimeout(() => {
+        if (!state.unlocked && document.body.classList.contains("locked")) {
+          unlockWithFaceId();
+        }
+      }, 450);
+    }
+
     function disableFaceIdUnlock() {
       const meta = getSecureMeta();
       if (!meta?.face) return;
@@ -1060,6 +1075,7 @@
       loadPrivacyEditing();
       setLockMode(getSecureMeta() ? "unlock" : "setup");
       updateSecurityState();
+      autoStartFaceUnlock();
     }
 
     function uid() {
