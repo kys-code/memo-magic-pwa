@@ -507,10 +507,11 @@
       </div>
       <div class="notice" id="lockNotice"></div>
       <div class="lock-actions">
+        <button class="btn secondary" id="faceUnlockBtn" type="button">Face IDで解除</button>
         <button class="btn primary" id="unlockBtn" type="button">解除</button>
         <button class="btn ghost" id="setupPinBtn" type="button">PINを設定</button>
       </div>
-      <p class="hint">PINはこの端末に保存されません。メモはPINから作った鍵で暗号化して保存します。</p>
+      <p class="hint">メモは暗号化して保存します。Face ID非対応時や失敗時はPINで解除できます。</p>
     </div>
   </section>
   <div class="app">
@@ -638,6 +639,8 @@
             <strong id="securityState">暗号化保存</strong>
           </div>
           <p class="hint">入力したメモはPINから作った鍵で暗号化し、この端末のブラウザ内 `localStorage` に保存されます。外部API、CDN、外部画像、外部スクリプトは使っていません。</p>
+          <button class="btn secondary" id="enableFaceIdBtn" type="button">Face ID解除を有効化</button>
+          <button class="btn ghost" id="disableFaceIdBtn" type="button">Face ID解除を無効化</button>
           <button class="btn ghost" id="lockNowBtn" type="button">ロックする</button>
           <button class="btn danger" id="wipeBtn" type="button">全データ削除</button>
         </section>
@@ -673,6 +676,7 @@
     const encryptedStoreKey = "memoMagicMobile.encrypted.v1";
     const privacyEditingKey = "memoMagicMobile.privacyEditing.v1";
     const pbkdf2Iterations = 260000;
+    const facePrfLabel = "Memo Magic Face ID vault unlock";
     const prompts = [
       "心が動いたのは、なぜ？",
       "今日いちばん学びがあった事実は？",
@@ -693,7 +697,8 @@
       promptIndex: 0,
       cryptoKey: null,
       unlocked: false,
-      privacyEditing: true
+      privacyEditing: true,
+      unlockMethod: "locked"
     };
 
     const el = (id) => document.getElementById(id);
@@ -743,6 +748,10 @@
       }
     }
 
+    function randomBytes(length) {
+      return crypto.getRandomValues(new Uint8Array(length));
+    }
+
     async function deriveKey(pin, salt, iterations) {
       const baseKey = await crypto.subtle.importKey(
         "raw",
@@ -760,21 +769,58 @@
       );
     }
 
-    async function encryptJson(value) {
-      const iv = crypto.getRandomValues(new Uint8Array(12));
-      const data = encoder.encode(JSON.stringify(value));
-      const encrypted = await crypto.subtle.encrypt({ name: "AES-GCM", iv }, state.cryptoKey, data);
+    async function encryptBytes(bytes, key) {
+      const iv = randomBytes(12);
+      const encrypted = await crypto.subtle.encrypt({ name: "AES-GCM", iv }, key, bytes);
       return {
         iv: bytesToBase64(iv),
         data: bytesToBase64(new Uint8Array(encrypted))
       };
     }
 
-    async function decryptJson(payload) {
+    async function decryptBytes(payload, key) {
       const iv = base64ToBytes(payload.iv);
       const data = base64ToBytes(payload.data);
-      const decrypted = await crypto.subtle.decrypt({ name: "AES-GCM", iv }, state.cryptoKey, data);
+      const decrypted = await crypto.subtle.decrypt({ name: "AES-GCM", iv }, key, data);
+      return new Uint8Array(decrypted);
+    }
+
+    async function encryptJson(value, key = state.cryptoKey) {
+      return encryptBytes(encoder.encode(JSON.stringify(value)), key);
+    }
+
+    async function decryptJson(payload, key = state.cryptoKey) {
+      const decrypted = await decryptBytes(payload, key);
       return JSON.parse(decoder.decode(decrypted));
+    }
+
+    async function createVaultKey() {
+      return crypto.subtle.generateKey(
+        { name: "AES-GCM", length: 256 },
+        true,
+        ["encrypt", "decrypt"]
+      );
+    }
+
+    async function wrapVaultKey(vaultKey, wrappingKey) {
+      const raw = new Uint8Array(await crypto.subtle.exportKey("raw", vaultKey));
+      return encryptBytes(raw, wrappingKey);
+    }
+
+    async function unwrapVaultKey(wrappedVaultKey, wrappingKey) {
+      const raw = await decryptBytes(wrappedVaultKey, wrappingKey);
+      return crypto.subtle.importKey("raw", raw, { name: "AES-GCM" }, true, ["encrypt", "decrypt"]);
+    }
+
+    function updateSecurityState() {
+      const meta = getSecureMeta();
+      const faceEnabled = Boolean(meta?.face?.credentialId && meta?.face?.wrappedVaultKey);
+      el("securityState").textContent = faceEnabled
+        ? "暗号化保存 + Face ID"
+        : "暗号化保存";
+      el("faceUnlockBtn").style.display = faceEnabled ? "inline-flex" : "none";
+      el("disableFaceIdBtn").style.display = faceEnabled ? "inline-flex" : "none";
+      el("enableFaceIdBtn").style.display = state.unlocked && !faceEnabled ? "inline-flex" : "none";
     }
 
     function setLockMode(mode) {
@@ -788,6 +834,7 @@
       el("pinInput").value = "";
       el("pinConfirmInput").value = "";
       el("pinInput").focus();
+      updateSecurityState();
     }
 
     function showLockNotice(message) {
@@ -807,16 +854,31 @@
       }
       const salt = crypto.getRandomValues(new Uint8Array(16));
       const meta = {
-        version: 1,
+        version: 2,
         iterations: pbkdf2Iterations,
         salt: bytesToBase64(salt)
       };
-      state.cryptoKey = await deriveKey(pin, salt, meta.iterations);
-      const encrypted = await encryptJson(getLegacyMemos());
+      const pinKey = await deriveKey(pin, salt, meta.iterations);
+      state.cryptoKey = await createVaultKey();
+      meta.wrappedVaultKey = await wrapVaultKey(state.cryptoKey, pinKey);
+      const encrypted = await encryptJson(getLegacyMemos(), state.cryptoKey);
       localStorage.setItem(secureMetaKey, JSON.stringify(meta));
       localStorage.setItem(encryptedStoreKey, JSON.stringify(encrypted));
       localStorage.removeItem(storeKey);
       await unlockWithPin(pin);
+    }
+
+    async function migratePinVault(meta, pinKey, memos) {
+      const nextMeta = {
+        version: 2,
+        iterations: meta.iterations || pbkdf2Iterations,
+        salt: meta.salt
+      };
+      state.cryptoKey = await createVaultKey();
+      nextMeta.wrappedVaultKey = await wrapVaultKey(state.cryptoKey, pinKey);
+      localStorage.setItem(secureMetaKey, JSON.stringify(nextMeta));
+      localStorage.setItem(encryptedStoreKey, JSON.stringify(await encryptJson(memos, state.cryptoKey)));
+      return nextMeta;
     }
 
     async function unlockWithPin(pinValue) {
@@ -827,14 +889,21 @@
         return;
       }
       try {
-        state.cryptoKey = await deriveKey(pin, base64ToBytes(meta.salt), meta.iterations || pbkdf2Iterations);
+        const pinKey = await deriveKey(pin, base64ToBytes(meta.salt), meta.iterations || pbkdf2Iterations);
         const payload = JSON.parse(localStorage.getItem(encryptedStoreKey) || "null");
-        state.memos = payload ? await decryptJson(payload) : [];
+        if (meta.wrappedVaultKey) {
+          state.cryptoKey = await unwrapVaultKey(meta.wrappedVaultKey, pinKey);
+          state.memos = payload ? await decryptJson(payload, state.cryptoKey) : [];
+        } else {
+          state.memos = payload ? await decryptJson(payload, pinKey) : [];
+          await migratePinVault(meta, pinKey, state.memos);
+        }
         if (!Array.isArray(state.memos)) state.memos = [];
         state.unlocked = true;
+        state.unlockMethod = "pin";
         state.promptIndex = Math.floor(Math.random() * prompts.length);
         document.body.classList.remove("locked");
-        el("securityState").textContent = "暗号化保存";
+        updateSecurityState();
         render();
       } catch {
         state.cryptoKey = null;
@@ -851,10 +920,125 @@
       render();
     }
 
+    async function getFaceSupport() {
+      return Boolean(
+        window.PublicKeyCredential &&
+        navigator.credentials &&
+        navigator.credentials.create &&
+        navigator.credentials.get &&
+        await PublicKeyCredential.isUserVerifyingPlatformAuthenticatorAvailable()
+      );
+    }
+
+    async function facePrfKey(credentialId, salt, mode) {
+      const challenge = randomBytes(32);
+      const publicKey = mode === "create" ? {
+        challenge,
+        rp: { name: "Memo Magic" },
+        user: {
+          id: randomBytes(16),
+          name: "local-user",
+          displayName: "Memo Magic"
+        },
+        pubKeyCredParams: [
+          { type: "public-key", alg: -7 },
+          { type: "public-key", alg: -257 }
+        ],
+        authenticatorSelection: {
+          authenticatorAttachment: "platform",
+          residentKey: "preferred",
+          userVerification: "required"
+        },
+        timeout: 60000,
+        extensions: { prf: { eval: { first: salt } } }
+      } : {
+        challenge,
+        allowCredentials: [{ type: "public-key", id: credentialId }],
+        userVerification: "required",
+        timeout: 60000,
+        extensions: { prf: { eval: { first: salt } } }
+      };
+      const credential = mode === "create"
+        ? await navigator.credentials.create({ publicKey })
+        : await navigator.credentials.get({ publicKey });
+      const extensionResults = credential.getClientExtensionResults ? credential.getClientExtensionResults() : {};
+      let prfResult = extensionResults?.prf?.results?.first;
+      if (!prfResult && mode === "create") {
+        const followUp = await facePrfKey(new Uint8Array(credential.rawId), salt, "get");
+        return {
+          credentialId: new Uint8Array(credential.rawId),
+          key: followUp.key
+        };
+      }
+      if (!prfResult) {
+        throw new Error("prf-unavailable");
+      }
+      return {
+        credentialId: new Uint8Array(credential.rawId),
+        key: await crypto.subtle.importKey("raw", prfResult, { name: "AES-GCM" }, false, ["encrypt", "decrypt"])
+      };
+    }
+
+    async function enableFaceIdUnlock() {
+      if (!state.cryptoKey) {
+        showNotice(el("settingsNotice"), "先にPINで解除してください。");
+        return;
+      }
+      try {
+        if (!await getFaceSupport()) {
+          showNotice(el("settingsNotice"), "この端末またはブラウザではFace ID解除を使えません。");
+          return;
+        }
+        const meta = getSecureMeta();
+        const salt = randomBytes(32);
+        const result = await facePrfKey(null, salt, "create");
+        meta.face = {
+          credentialId: bytesToBase64(result.credentialId),
+          salt: bytesToBase64(salt),
+          wrappedVaultKey: await wrapVaultKey(state.cryptoKey, result.key)
+        };
+        localStorage.setItem(secureMetaKey, JSON.stringify(meta));
+        updateSecurityState();
+        showNotice(el("settingsNotice"), "Face ID解除を有効化しました。");
+      } catch {
+        showNotice(el("settingsNotice"), "Face ID解除を有効化できませんでした。PIN解除は引き続き使えます。");
+      }
+    }
+
+    async function unlockWithFaceId() {
+      const meta = getSecureMeta();
+      if (!meta?.face?.credentialId || !meta?.face?.wrappedVaultKey) return;
+      try {
+        const result = await facePrfKey(base64ToBytes(meta.face.credentialId), base64ToBytes(meta.face.salt), "get");
+        state.cryptoKey = await unwrapVaultKey(meta.face.wrappedVaultKey, result.key);
+        const payload = JSON.parse(localStorage.getItem(encryptedStoreKey) || "null");
+        state.memos = payload ? await decryptJson(payload, state.cryptoKey) : [];
+        if (!Array.isArray(state.memos)) state.memos = [];
+        state.unlocked = true;
+        state.unlockMethod = "face";
+        state.promptIndex = Math.floor(Math.random() * prompts.length);
+        document.body.classList.remove("locked");
+        updateSecurityState();
+        render();
+      } catch {
+        showLockNotice("Face IDで解除できませんでした。PINで解除してください。");
+      }
+    }
+
+    function disableFaceIdUnlock() {
+      const meta = getSecureMeta();
+      if (!meta?.face) return;
+      delete meta.face;
+      localStorage.setItem(secureMetaKey, JSON.stringify(meta));
+      updateSecurityState();
+      showNotice(el("settingsNotice"), "Face ID解除を無効化しました。");
+    }
+
     function lockApp() {
       state.cryptoKey = null;
       state.unlocked = false;
       state.memos = [];
+      state.unlockMethod = "locked";
       document.body.classList.add("locked");
       setLockMode(getSecureMeta() ? "unlock" : "setup");
     }
@@ -870,6 +1054,7 @@
       }
       loadPrivacyEditing();
       setLockMode(getSecureMeta() ? "unlock" : "setup");
+      updateSecurityState();
     }
 
     function uid() {
@@ -1218,6 +1403,9 @@
     el("detailSheet").addEventListener("click", (event) => {
       if (event.target.id === "detailSheet") closeMemoDetail();
     });
+    el("faceUnlockBtn").addEventListener("click", unlockWithFaceId);
+    el("enableFaceIdBtn").addEventListener("click", enableFaceIdUnlock);
+    el("disableFaceIdBtn").addEventListener("click", disableFaceIdUnlock);
     el("lockNowBtn").addEventListener("click", lockApp);
     el("unlockBtn").addEventListener("click", () => unlockWithPin());
     el("setupPinBtn").addEventListener("click", setupPin);
