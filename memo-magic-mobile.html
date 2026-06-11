@@ -315,6 +315,51 @@
     }
     .notice.show { display: block; }
 
+    body.locked .app,
+    body.locked nav {
+      display: none;
+    }
+    .lock-screen {
+      min-height: 100svh;
+      display: none;
+      align-items: center;
+      justify-content: center;
+      padding: calc(18px + env(safe-area-inset-top)) 14px calc(18px + env(safe-area-inset-bottom));
+    }
+    body.locked .lock-screen {
+      display: flex;
+    }
+    .lock-card {
+      width: min(430px, 100%);
+      display: grid;
+      gap: 14px;
+      padding: 18px;
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      background: var(--panel);
+      box-shadow: var(--shadow);
+    }
+    .lock-card h1 {
+      font-size: 24px;
+    }
+    .lock-actions {
+      display: grid;
+      gap: 8px;
+    }
+    .security-state {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 10px;
+      padding: 11px 12px;
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      background: var(--paper);
+      color: var(--muted);
+      font-size: 13px;
+      line-height: 1.45;
+    }
+
     nav {
       position: fixed;
       left: 0;
@@ -365,7 +410,29 @@
     }
   </style>
 </head>
-<body>
+<body class="locked">
+  <section class="lock-screen" id="lockScreen" aria-label="PINロック">
+    <div class="lock-card">
+      <div>
+        <h1>Memo Magic</h1>
+        <p class="caption" id="lockCaption">PINでロックされています</p>
+      </div>
+      <div class="field">
+        <label for="pinInput">PIN</label>
+        <input id="pinInput" type="password" inputmode="numeric" autocomplete="current-password" placeholder="4桁以上">
+      </div>
+      <div class="field" id="pinConfirmField">
+        <label for="pinConfirmInput">PIN確認</label>
+        <input id="pinConfirmInput" type="password" inputmode="numeric" autocomplete="new-password" placeholder="もう一度入力">
+      </div>
+      <div class="notice" id="lockNotice"></div>
+      <div class="lock-actions">
+        <button class="btn primary" id="unlockBtn" type="button">解除</button>
+        <button class="btn ghost" id="setupPinBtn" type="button">PINを設定</button>
+      </div>
+      <p class="hint">PINはこの端末に保存されません。メモはPINから作った鍵で暗号化して保存します。</p>
+    </div>
+  </section>
   <div class="app">
     <header>
       <div class="head">
@@ -485,7 +552,12 @@
         </section>
         <section class="panel section stack">
           <h2>プライバシー</h2>
-          <p class="hint">入力したメモはこの端末のブラウザ内 `localStorage` に保存されます。外部API、CDN、外部画像、外部スクリプトは使っていません。</p>
+          <div class="security-state">
+            <span>保存状態</span>
+            <strong id="securityState">暗号化保存</strong>
+          </div>
+          <p class="hint">入力したメモはPINから作った鍵で暗号化し、この端末のブラウザ内 `localStorage` に保存されます。外部API、CDN、外部画像、外部スクリプトは使っていません。</p>
+          <button class="btn ghost" id="lockNowBtn" type="button">ロックする</button>
           <button class="btn danger" id="wipeBtn" type="button">全データ削除</button>
         </section>
       </section>
@@ -503,6 +575,9 @@
 
   <script>
     const storeKey = "memoMagicMobile.v1";
+    const secureMetaKey = "memoMagicMobile.secure.v1";
+    const encryptedStoreKey = "memoMagicMobile.encrypted.v1";
+    const pbkdf2Iterations = 260000;
     const prompts = [
       "心が動いたのは、なぜ？",
       "今日いちばん学びがあった事実は？",
@@ -520,7 +595,9 @@
 
     const state = {
       memos: [],
-      promptIndex: 0
+      promptIndex: 0,
+      cryptoKey: null,
+      unlocked: false
     };
 
     const el = (id) => document.getElementById(id);
@@ -535,19 +612,167 @@
       status: el("statusInput")
     };
 
-    function load() {
-      try {
-        const saved = JSON.parse(localStorage.getItem(storeKey) || "[]");
-        state.memos = Array.isArray(saved) ? saved : [];
-      } catch {
-        state.memos = [];
-      }
-      state.promptIndex = Math.floor(Math.random() * prompts.length);
+    const encoder = new TextEncoder();
+    const decoder = new TextDecoder();
+
+    function bytesToBase64(bytes) {
+      let binary = "";
+      bytes.forEach((byte) => { binary += String.fromCharCode(byte); });
+      return btoa(binary);
     }
 
-    function save() {
-      localStorage.setItem(storeKey, JSON.stringify(state.memos));
+    function base64ToBytes(value) {
+      const binary = atob(value);
+      const bytes = new Uint8Array(binary.length);
+      for (let index = 0; index < binary.length; index += 1) {
+        bytes[index] = binary.charCodeAt(index);
+      }
+      return bytes;
+    }
+
+    function getSecureMeta() {
+      try {
+        return JSON.parse(localStorage.getItem(secureMetaKey) || "null");
+      } catch {
+        return null;
+      }
+    }
+
+    function getLegacyMemos() {
+      try {
+        const saved = JSON.parse(localStorage.getItem(storeKey) || "[]");
+        return Array.isArray(saved) ? saved : [];
+      } catch {
+        return [];
+      }
+    }
+
+    async function deriveKey(pin, salt, iterations) {
+      const baseKey = await crypto.subtle.importKey(
+        "raw",
+        encoder.encode(pin),
+        "PBKDF2",
+        false,
+        ["deriveKey"]
+      );
+      return crypto.subtle.deriveKey(
+        { name: "PBKDF2", salt, iterations, hash: "SHA-256" },
+        baseKey,
+        { name: "AES-GCM", length: 256 },
+        false,
+        ["encrypt", "decrypt"]
+      );
+    }
+
+    async function encryptJson(value) {
+      const iv = crypto.getRandomValues(new Uint8Array(12));
+      const data = encoder.encode(JSON.stringify(value));
+      const encrypted = await crypto.subtle.encrypt({ name: "AES-GCM", iv }, state.cryptoKey, data);
+      return {
+        iv: bytesToBase64(iv),
+        data: bytesToBase64(new Uint8Array(encrypted))
+      };
+    }
+
+    async function decryptJson(payload) {
+      const iv = base64ToBytes(payload.iv);
+      const data = base64ToBytes(payload.data);
+      const decrypted = await crypto.subtle.decrypt({ name: "AES-GCM", iv }, state.cryptoKey, data);
+      return JSON.parse(decoder.decode(decrypted));
+    }
+
+    function setLockMode(mode) {
+      const hasVault = Boolean(getSecureMeta());
+      el("pinConfirmField").style.display = mode === "setup" ? "grid" : "none";
+      el("setupPinBtn").style.display = mode === "setup" ? "inline-flex" : "none";
+      el("unlockBtn").style.display = mode === "unlock" ? "inline-flex" : "none";
+      el("lockCaption").textContent = mode === "setup"
+        ? (hasVault ? "PINを再設定します" : "はじめにPINを設定してください")
+        : "PINでロックされています";
+      el("pinInput").value = "";
+      el("pinConfirmInput").value = "";
+      el("pinInput").focus();
+    }
+
+    function showLockNotice(message) {
+      showNotice(el("lockNotice"), message);
+    }
+
+    async function setupPin() {
+      const pin = el("pinInput").value.trim();
+      const confirmPin = el("pinConfirmInput").value.trim();
+      if (pin.length < 4) {
+        showLockNotice("PINは4桁以上にしてください。");
+        return;
+      }
+      if (pin !== confirmPin) {
+        showLockNotice("PINが一致しません。");
+        return;
+      }
+      const salt = crypto.getRandomValues(new Uint8Array(16));
+      const meta = {
+        version: 1,
+        iterations: pbkdf2Iterations,
+        salt: bytesToBase64(salt)
+      };
+      state.cryptoKey = await deriveKey(pin, salt, meta.iterations);
+      const encrypted = await encryptJson(getLegacyMemos());
+      localStorage.setItem(secureMetaKey, JSON.stringify(meta));
+      localStorage.setItem(encryptedStoreKey, JSON.stringify(encrypted));
+      localStorage.removeItem(storeKey);
+      await unlockWithPin(pin);
+    }
+
+    async function unlockWithPin(pinValue) {
+      const pin = pinValue || el("pinInput").value.trim();
+      const meta = getSecureMeta();
+      if (!meta) {
+        setLockMode("setup");
+        return;
+      }
+      try {
+        state.cryptoKey = await deriveKey(pin, base64ToBytes(meta.salt), meta.iterations || pbkdf2Iterations);
+        const payload = JSON.parse(localStorage.getItem(encryptedStoreKey) || "null");
+        state.memos = payload ? await decryptJson(payload) : [];
+        if (!Array.isArray(state.memos)) state.memos = [];
+        state.unlocked = true;
+        state.promptIndex = Math.floor(Math.random() * prompts.length);
+        document.body.classList.remove("locked");
+        el("securityState").textContent = "暗号化保存";
+        render();
+      } catch {
+        state.cryptoKey = null;
+        state.unlocked = false;
+        showLockNotice("PINが違うか、保存データを復号できません。");
+      }
+    }
+
+    async function save() {
+      if (!state.cryptoKey) return;
+      const encrypted = await encryptJson(state.memos);
+      localStorage.setItem(encryptedStoreKey, JSON.stringify(encrypted));
+      localStorage.removeItem(storeKey);
       render();
+    }
+
+    function lockApp() {
+      state.cryptoKey = null;
+      state.unlocked = false;
+      state.memos = [];
+      document.body.classList.add("locked");
+      setLockMode(getSecureMeta() ? "unlock" : "setup");
+    }
+
+    function initializeSecurity() {
+      state.promptIndex = Math.floor(Math.random() * prompts.length);
+      if (!window.crypto || !crypto.subtle) {
+        setLockMode("setup");
+        el("unlockBtn").disabled = true;
+        el("setupPinBtn").disabled = true;
+        showLockNotice("暗号化保存にはHTTPSのURLで開く必要があります。");
+        return;
+      }
+      setLockMode(getSecureMeta() ? "unlock" : "setup");
     }
 
     function uid() {
@@ -842,6 +1067,17 @@
       save();
       showNotice(el("settingsNotice"), "削除しました。");
     });
+    el("lockNowBtn").addEventListener("click", lockApp);
+    el("unlockBtn").addEventListener("click", () => unlockWithPin());
+    el("setupPinBtn").addEventListener("click", setupPin);
+    el("pinInput").addEventListener("keydown", (event) => {
+      if (event.key !== "Enter") return;
+      if (getSecureMeta()) unlockWithPin();
+      else el("pinConfirmInput").focus();
+    });
+    el("pinConfirmInput").addEventListener("keydown", (event) => {
+      if (event.key === "Enter") setupPin();
+    });
 
     if ("serviceWorker" in navigator) {
       const isLocalhost = ["localhost", "127.0.0.1", "[::1]"].includes(location.hostname);
@@ -853,8 +1089,7 @@
       }
     }
 
-    load();
-    render();
+    initializeSecurity();
   </script>
 </body>
 </html>
