@@ -248,13 +248,16 @@
       color: var(--muted);
       font-size: 13px;
       line-height: 1.55;
+      max-height: 220px;
+      overflow-y: auto;
+      overscroll-behavior: contain;
+      padding-right: 4px;
+      -webkit-overflow-scrolling: touch;
       overflow-wrap: anywhere;
     }
     .memo-body p {
-      display: -webkit-box;
-      -webkit-line-clamp: 4;
-      -webkit-box-orient: vertical;
-      overflow: hidden;
+      margin: 0;
+      white-space: pre-wrap;
     }
     .memo-body b { color: var(--ink); }
     .memo-actions {
