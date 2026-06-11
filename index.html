@@ -379,16 +379,17 @@
       inset: 0;
       z-index: 40;
       display: none;
-      padding: calc(14px + env(safe-area-inset-top)) 12px calc(14px + env(safe-area-inset-bottom));
+      padding: calc(8px + env(safe-area-inset-top)) 8px calc(8px + env(safe-area-inset-bottom));
       background: rgba(31, 35, 32, .38);
       backdrop-filter: blur(10px);
     }
     .detail-sheet.show {
       display: grid;
-      align-items: end;
+      align-items: stretch;
     }
     .detail-card {
-      max-height: min(82svh, 720px);
+      height: calc(100svh - 16px - env(safe-area-inset-top) - env(safe-area-inset-bottom));
+      max-height: none;
       display: grid;
       grid-template-rows: auto 1fr auto;
       border: 1px solid var(--line);
@@ -413,10 +414,11 @@
       min-height: 0;
       overflow: auto;
       -webkit-overflow-scrolling: touch;
-      padding: 14px;
+      overscroll-behavior: contain;
+      padding: 16px 14px 28px;
       display: grid;
       align-content: start;
-      gap: 14px;
+      gap: 16px;
     }
     .detail-block {
       display: grid;
@@ -433,6 +435,7 @@
       line-height: 1.65;
       color: var(--ink);
       font-size: 15px;
+      margin: 0;
     }
     .detail-foot {
       padding: 10px 14px 14px;
@@ -675,8 +678,8 @@
     const secureMetaKey = "memoMagicMobile.secure.v1";
     const encryptedStoreKey = "memoMagicMobile.encrypted.v1";
     const privacyEditingKey = "memoMagicMobile.privacyEditing.v1";
+    const faceDeviceKey = "memoMagicMobile.faceDeviceKey.v1";
     const pbkdf2Iterations = 260000;
-    const facePrfLabel = "Memo Magic Face ID vault unlock";
     const prompts = [
       "心が動いたのは、なぜ？",
       "今日いちばん学びがあった事実は？",
@@ -812,9 +815,13 @@
       return crypto.subtle.importKey("raw", raw, { name: "AES-GCM" }, true, ["encrypt", "decrypt"]);
     }
 
+    async function importAesKey(bytes) {
+      return crypto.subtle.importKey("raw", bytes, { name: "AES-GCM" }, false, ["encrypt", "decrypt"]);
+    }
+
     function updateSecurityState() {
       const meta = getSecureMeta();
-      const faceEnabled = Boolean(meta?.face?.credentialId && meta?.face?.wrappedVaultKey);
+      const faceEnabled = Boolean(meta?.face?.credentialId && meta?.face?.wrappedVaultKey && localStorage.getItem(faceDeviceKey));
       el("securityState").textContent = faceEnabled
         ? "暗号化保存 + Face ID"
         : "暗号化保存";
@@ -930,9 +937,10 @@
       );
     }
 
-    async function facePrfKey(credentialId, salt, mode) {
+    async function createFaceCredential() {
       const challenge = randomBytes(32);
-      const publicKey = mode === "create" ? {
+      const credential = await navigator.credentials.create({
+        publicKey: {
         challenge,
         rp: { name: "Memo Magic" },
         user: {
@@ -946,37 +954,27 @@
         ],
         authenticatorSelection: {
           authenticatorAttachment: "platform",
-          residentKey: "preferred",
+          residentKey: "discouraged",
+          requireResidentKey: false,
           userVerification: "required"
         },
+        attestation: "none",
         timeout: 60000,
-        extensions: { prf: { eval: { first: salt } } }
-      } : {
-        challenge,
-        allowCredentials: [{ type: "public-key", id: credentialId }],
-        userVerification: "required",
-        timeout: 60000,
-        extensions: { prf: { eval: { first: salt } } }
-      };
-      const credential = mode === "create"
-        ? await navigator.credentials.create({ publicKey })
-        : await navigator.credentials.get({ publicKey });
-      const extensionResults = credential.getClientExtensionResults ? credential.getClientExtensionResults() : {};
-      let prfResult = extensionResults?.prf?.results?.first;
-      if (!prfResult && mode === "create") {
-        const followUp = await facePrfKey(new Uint8Array(credential.rawId), salt, "get");
-        return {
-          credentialId: new Uint8Array(credential.rawId),
-          key: followUp.key
-        };
+        extensions: {}
       }
-      if (!prfResult) {
-        throw new Error("prf-unavailable");
-      }
-      return {
-        credentialId: new Uint8Array(credential.rawId),
-        key: await crypto.subtle.importKey("raw", prfResult, { name: "AES-GCM" }, false, ["encrypt", "decrypt"])
-      };
+      });
+      return new Uint8Array(credential.rawId);
+    }
+
+    async function verifyFaceCredential(credentialId) {
+      await navigator.credentials.get({
+        publicKey: {
+          challenge: randomBytes(32),
+          allowCredentials: [{ type: "public-key", id: credentialId }],
+          userVerification: "required",
+          timeout: 60000
+        }
+      });
     }
 
     async function enableFaceIdUnlock() {
@@ -990,13 +988,16 @@
           return;
         }
         const meta = getSecureMeta();
-        const salt = randomBytes(32);
-        const result = await facePrfKey(null, salt, "create");
+        const credentialId = await createFaceCredential();
+        const deviceSecret = randomBytes(32);
+        const faceKey = await importAesKey(deviceSecret);
         meta.face = {
-          credentialId: bytesToBase64(result.credentialId),
-          salt: bytesToBase64(salt),
-          wrappedVaultKey: await wrapVaultKey(state.cryptoKey, result.key)
+          version: 2,
+          mode: "device-gated",
+          credentialId: bytesToBase64(credentialId),
+          wrappedVaultKey: await wrapVaultKey(state.cryptoKey, faceKey)
         };
+        localStorage.setItem(faceDeviceKey, bytesToBase64(deviceSecret));
         localStorage.setItem(secureMetaKey, JSON.stringify(meta));
         updateSecurityState();
         showNotice(el("settingsNotice"), "Face ID解除を有効化しました。");
@@ -1009,8 +1010,11 @@
       const meta = getSecureMeta();
       if (!meta?.face?.credentialId || !meta?.face?.wrappedVaultKey) return;
       try {
-        const result = await facePrfKey(base64ToBytes(meta.face.credentialId), base64ToBytes(meta.face.salt), "get");
-        state.cryptoKey = await unwrapVaultKey(meta.face.wrappedVaultKey, result.key);
+        await verifyFaceCredential(base64ToBytes(meta.face.credentialId));
+        const deviceSecret = localStorage.getItem(faceDeviceKey);
+        if (!deviceSecret) throw new Error("missing-face-key");
+        const faceKey = await importAesKey(base64ToBytes(deviceSecret));
+        state.cryptoKey = await unwrapVaultKey(meta.face.wrappedVaultKey, faceKey);
         const payload = JSON.parse(localStorage.getItem(encryptedStoreKey) || "null");
         state.memos = payload ? await decryptJson(payload, state.cryptoKey) : [];
         if (!Array.isArray(state.memos)) state.memos = [];
@@ -1030,6 +1034,7 @@
       if (!meta?.face) return;
       delete meta.face;
       localStorage.setItem(secureMetaKey, JSON.stringify(meta));
+      localStorage.removeItem(faceDeviceKey);
       updateSecurityState();
       showNotice(el("settingsNotice"), "Face ID解除を無効化しました。");
     }
