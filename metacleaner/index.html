@@ -38,8 +38,17 @@ h1{margin-bottom:4px}
 .note{padding:10px 12px;border:1px solid var(--line);border-radius:12px;background:#10182a}
 .diffbox{margin-top:14px;padding:13px;border:1px solid #3b82f6;border-radius:12px;background:#0d1a30}
 .diffbox h3{margin:0 0 8px}
-.removed{color:#fecaca;background:#3a1720;border-color:#7f1d1d}
-.diffbox table{margin-top:10px;background:#10182a;border:1px solid var(--line);border-radius:10px;overflow:hidden}
+.comparison{overflow-x:auto;border:1px solid var(--line);border-radius:10px}
+.comparison table{table-layout:fixed;background:#10182a;font-size:12px}
+.comparison th,.comparison td{padding:7px 6px}
+.comparison th:nth-child(1),.comparison td:nth-child(1){width:21%}
+.comparison th:nth-child(2),.comparison td:nth-child(2){width:17%;text-align:center}
+.comparison th:nth-child(3),.comparison td:nth-child(3){width:17%;text-align:center}
+.comparison th:nth-child(4),.comparison td:nth-child(4){width:45%}
+.state-detected{color:#fda4af;font-weight:700}
+.state-removed{color:#4ade80;font-weight:700}
+.state-kept{color:#93c5fd;font-weight:700}
+.state-none{color:var(--muted)}
 </style>
 </head>
 <body>
@@ -63,10 +72,8 @@ h1{margin-bottom:4px}
   </div>
   <p id="status"></p>
   <div id="diff" class="diffbox hidden">
-    <h3>削除された項目</h3>
-    <div id="diffCategories"></div>
-    <div id="diffDetails"></div>
-    <p class="small">画像本体と色プロファイルは保持しています。</p>
+    <h3>削除前後の比較</h3>
+    <div id="comparison" class="comparison"></div>
   </div>
 </div>
 
@@ -277,31 +284,40 @@ function summary(el,f){
  el.innerHTML=arr.map(([n,v])=>`<span class="pill ${v?'bad':'ok'}">${n}: ${v?'検出':'未検出'}</span>`).join('');
 }
 
-function compareResults(before,after){
- const labels={exif:'EXIF',gps:'GPS位置情報',xmp:'XMP',iptc:'IPTC',device:'機種情報',time:'撮影日時',comment:'コメント'};
- const categories=Object.keys(labels).filter(k=>before.flags[k]&&!after.flags[k]).map(k=>labels[k]);
- const remaining=new Map();
- for(const row of after.rows){const key=JSON.stringify(row);remaining.set(key,(remaining.get(key)||0)+1)}
- const rows=[];
- for(const row of before.rows){
-  const key=JSON.stringify(row),count=remaining.get(key)||0;
-  if(count)remaining.set(key,count-1);else rows.push(row);
- }
- return{categories,rows};
+function hasICC(res){return res.rows.some(([a,b])=>a==='APP2'&&String(b).toUpperCase().includes('ICC'))}
+
+function state(before,after,keep=false){
+ if(keep)return[
+  before?'<span class="state-kept">あり</span>':'<span class="state-none">なし</span>',
+  after?'<span class="state-kept">保持</span>':'<span class="state-none">なし</span>'
+ ];
+ const b=before?'<span class="state-detected">検出</span>':'<span class="state-none">未検出</span>';
+ const a=before&&!after?'<span class="state-removed">削除済み</span>':after?'<span class="warn">残存</span>':'<span class="state-none">未検出</span>';
+ return[b,a];
 }
 
-function renderDiff(before,after){
- const diff=compareResults(before,after);
- $('#diffCategories').innerHTML=diff.categories.length
-  ?'<div class="small">消えたカテゴリ</div>'+diff.categories.map(n=>`<span class="pill removed">${esc(n)}</span>`).join('')
-  :'<span class="pill ok">検出カテゴリの変化なし</span>';
- let h='<div class="small" style="margin-top:10px">消えた具体的な項目</div>';
- if(diff.rows.length){
-  h+='<table><thead><tr><th>項目</th><th>削除された内容</th></tr></thead><tbody>';
-  for(const[a,b]of diff.rows)h+=`<tr><td>${esc(a)}</td><td>${esc(b)}</td></tr>`;
-  h+='</tbody></table>';
- }else h+='<p class="small">個別の削除項目はありません。</p>';
- $('#diffDetails').innerHTML=h;
+function comparisonRows(before,after){
+ const defs=[
+  ['EXIF','exif','カメラ設定やサムネイルなどをまとめた情報です。'],
+  ['GPS位置情報','gps','撮影した緯度・経度などの位置情報です。'],
+  ['XMP','xmp','編集履歴・評価・タグなどに使われる情報です。'],
+  ['IPTC','iptc','タイトル・キーワード・作成者などの情報です。'],
+  ['機種情報','device','カメラやスマホのメーカー・機種・レンズ情報です。'],
+  ['撮影日時','time','写真を撮影・保存した日時情報です。'],
+  ['コメント','comment','画像ファイル内に埋め込まれたコメントです。']
+ ];
+ const rows=defs.map(([name,key,desc])=>[name,...state(before.flags[key],after.flags[key]),desc]);
+ rows.push(['ICC色プロファイル',...state(hasICC(before),hasICC(after),true),'色を正しく表示するための情報です。個人情報ではないため保持します。']);
+ rows.push(['画像本体',...state(true,true,true),'写真の画素データです。メタデータ削除後も保持します。']);
+ return rows;
+}
+
+function renderComparison(before,after){
+ const rows=comparisonRows(before,after);
+ let h='<table><thead><tr><th>項目</th><th>削除前</th><th>削除後</th><th>内容</th></tr></thead><tbody>';
+ for(const[name,b,a,desc]of rows)h+=`<tr><td>${esc(name)}</td><td>${b}</td><td>${a}</td><td>${esc(desc)}</td></tr>`;
+ h+='</tbody></table>';
+ $('#comparison').innerHTML=h;
  $('#diff').classList.remove('hidden');
 }
 
@@ -395,7 +411,7 @@ $('#clean').addEventListener('click',async()=>{
   const r=analyze(cleaned,outType);
   render($('#after'),r);
   summary($('#afterSummary'),r.flags);
-  if(beforeResult)renderDiff(beforeResult,r);
+  if(beforeResult)renderComparison(beforeResult,r);
 
   if(downloadURL)URL.revokeObjectURL(downloadURL);
   downloadURL=URL.createObjectURL(blob);
