@@ -1,0 +1,327 @@
+<!doctype html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<meta name="theme-color" content="#0b1020">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="MetaCleaner">
+<title>MetaCleaner</title>
+<style>
+:root{color-scheme:light dark;--bg:#0b1020;--panel:#131a2b;--line:#2a3550;--text:#eef2ff;--muted:#aab3c8;--ok:#4ade80;--warn:#fbbf24;--bad:#fb7185}
+*{box-sizing:border-box}
+body{margin:0;font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;background:var(--bg);color:var(--text)}
+main{max-width:1050px;margin:auto;padding:16px}
+.card{background:var(--panel);border:1px solid var(--line);border-radius:16px;padding:15px;margin:12px 0}
+.grid{display:grid;grid-template-columns:1fr 1fr;gap:12px}
+@media(max-width:760px){.grid{grid-template-columns:1fr}}
+input{max-width:100%}
+button,a.btn{border:0;border-radius:12px;padding:11px 14px;font-weight:700;font-size:15px;text-decoration:none;display:inline-block}
+.primary{background:#e5f6ff;color:#08111c}
+.secondary{background:#27324a;color:white}
+.actions{display:flex;gap:8px;flex-wrap:wrap;margin-top:12px}
+button:disabled{opacity:.45}
+.meta{overflow:auto;max-height:480px;border:1px solid var(--line);border-radius:10px}
+table{width:100%;border-collapse:collapse;font-size:13px}
+th,td{padding:8px;border-bottom:1px solid var(--line);text-align:left;vertical-align:top;word-break:break-word}
+th{background:#172036;position:sticky;top:0}
+td:first-child{width:40%;color:#c7d2fe}
+.small{font-size:12px;color:var(--muted)}
+.ok{color:var(--ok)}
+.warn{color:var(--warn)}
+.bad{color:var(--bad)}
+.preview{max-width:100%;max-height:260px;display:block;margin:12px auto;border-radius:12px}
+.hidden{display:none}
+.pill{display:inline-block;border:1px solid var(--line);border-radius:999px;padding:4px 8px;margin:3px;font-size:12px}
+h1{margin-bottom:4px}
+.note{padding:10px 12px;border:1px solid var(--line);border-radius:12px;background:#10182a}
+</style>
+</head>
+<body>
+<main>
+<h1>MetaCleaner</h1>
+<p class="small">写真は端末内だけで処理します。サーバーには送信しません。</p>
+
+<div class="card">
+  <div class="note small">
+    JPEG / PNG対応。JPEGは再圧縮せず、EXIF・GPS・XMP・IPTC・コメント領域を削除します。
+  </div>
+  <div style="margin-top:12px">
+    <input id="file" type="file" accept="image/jpeg,image/png,.jpg,.jpeg,.png">
+  </div>
+  <div id="diag" class="small" style="margin-top:10px">写真を選択してください</div>
+  <img id="preview" class="preview hidden" alt="">
+  <div class="actions">
+    <button id="clean" class="primary" disabled>メタデータを削除</button>
+    <button id="reset" class="secondary" disabled>リセット</button>
+    <a id="download" class="btn primary hidden">削除済み画像を保存</a>
+  </div>
+  <p id="status"></p>
+</div>
+
+<div class="grid">
+<section class="card">
+<h2>削除前</h2>
+<div id="beforeSummary"></div>
+<div id="before" class="meta"><p class="small" style="padding:10px">写真を選ぶと解析結果が表示されます。</p></div>
+</section>
+
+<section class="card">
+<h2>削除後</h2>
+<div id="afterSummary"></div>
+<div id="after" class="meta"><p class="small" style="padding:10px">削除後に再解析します。</p></div>
+</section>
+</div>
+
+<div class="card">
+<h2>ホーム画面に置く場合</h2>
+<p class="small">このページをSafariで開けた場合は、共有ボタン →「ホーム画面に追加」でショートカット化できます。</p>
+</div>
+
+</main>
+
+<script>
+const $=s=>document.querySelector(s);
+let file=null,buf=null,cleaned=null,previewURL=null,downloadURL=null;
+
+function esc(s){return String(s).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]))}
+function fmt(n){return n<1024?n+' B':n<1048576?(n/1024).toFixed(1)+' KB':(n/1048576).toFixed(2)+' MB'}
+function concat(parts){let n=parts.reduce((a,b)=>a+b.length,0),o=new Uint8Array(n),p=0;for(const x of parts){o.set(x,p);p+=x.length}return o.buffer}
+function readAscii(u,start,len){let s='';for(let i=0;i<len&&start+i<u.length;i++){let c=u[start+i];if(c===0)break;if(c>=32&&c<=126)s+=String.fromCharCode(c)}return s}
+function hex(n,w=4){return '0x'+n.toString(16).toUpperCase().padStart(w,'0')}
+
+function parseJPEG(buffer){
+ const u=new Uint8Array(buffer),rows=[],flags={exif:false,xmp:false,iptc:false,comment:false,gps:false,device:false,time:false};
+ if(u[0]!==0xFF||u[1]!==0xD8)return{rows:[['エラー','JPEGとして認識できません']],flags};
+ let i=2;
+ while(i+3<u.length){
+  if(u[i]!==0xFF){i++;continue}
+  const marker=u[i+1];i+=2;
+  if(marker===0xD9||marker===0xDA)break;
+  if(marker===0x00||marker===0xD8||marker===0x01||(marker>=0xD0&&marker<=0xD7))continue;
+  if(i+1>=u.length)break;
+  const len=(u[i]<<8)|u[i+1],dataStart=i+2,dataLen=len-2,end=i+len;
+  if(end>u.length)break;
+  let name='Marker '+hex(marker,2),detail='';
+  if(marker>=0xE0&&marker<=0xEF)name='APP'+(marker-0xE0);
+  if(marker===0xFE){name='COM';flags.comment=true;detail=readAscii(u,dataStart,Math.min(dataLen,200))}
+  if(marker===0xE1){
+    const head=readAscii(u,dataStart,40);
+    if(head.startsWith('Exif')){
+      flags.exif=true;detail='EXIF/TIFF metadata';
+      const ex=parseExifBlock(u,dataStart+6,dataLen-6);
+      rows.push(...ex.rows);
+      flags=mergeFlags(flags,ex.flags);
+    } else if(head.startsWith('http://ns.adobe.com/xap/1.0/')){
+      flags.xmp=true;detail='XMP metadata';
+    } else detail=head||'APP1 metadata';
+  }
+  if(marker===0xED){flags.iptc=true;detail='IPTC / Photoshop metadata'}
+  if(marker===0xE2&&!detail)detail=readAscii(u,dataStart,30)||'ICC/APP2';
+  rows.push([name,detail||`${dataLen} bytes`]);i=end;
+ }
+ if(!rows.length)rows.push(['結果','追加メタデータ領域は見つかりませんでした']);
+ return{rows,flags};
+}
+
+function mergeFlags(a,b){
+ const o={};for(const k of Object.keys(a))o[k]=!!(a[k]||b[k]);return o
+}
+
+function parseExifBlock(u,base,maxLen){
+ const rows=[],flags={exif:true,xmp:false,iptc:false,comment:false,gps:false,device:false,time:false};
+ try{
+  const le=u[base]===0x49&&u[base+1]===0x49,be=u[base]===0x4D&&u[base+1]===0x4D;
+  if(!le&&!be)return{rows:[['EXIF','TIFFヘッダーを解析できません']],flags};
+  const dv=new DataView(u.buffer,u.byteOffset+base,Math.min(maxLen,u.length-base));
+  const U16=o=>dv.getUint16(o,le),U32=o=>dv.getUint32(o,le),first=U32(4);
+  const tagNames={
+    0x010F:'Make（メーカー）',
+    0x0110:'Model（機種）',
+    0x0131:'Software',
+    0x0132:'DateTime',
+    0x8769:'ExifIFD pointer',
+    0x8825:'GPS IFD pointer',
+    0x9003:'DateTimeOriginal',
+    0x9004:'DateTimeDigitized',
+    0xA434:'LensModel'
+  };
+  const seen=new Set();
+
+  function parseIFD(off,label){
+    if(!off||off+2>dv.byteLength||seen.has(off))return;
+    seen.add(off);
+    const count=U16(off);
+    rows.push([label,`${count} tags`]);
+    for(let n=0;n<count;n++){
+      const p=off+2+n*12;
+      if(p+12>dv.byteLength)break;
+      const tag=U16(p),type=U16(p+2),countv=U32(p+4),vo=p+8;
+      let value='';
+      const tname=tagNames[tag]||hex(tag);
+      if(type===2){
+        let pos=countv<=4?vo:U32(vo);
+        if(pos+countv<=dv.byteLength)
+          value=readAscii(new Uint8Array(dv.buffer,dv.byteOffset,dv.byteLength),pos,countv);
+      } else if(type===3&&countv===1)value=String(U16(vo));
+      else if(type===4&&countv===1)value=String(U32(vo));
+      if(value)rows.push([tname,value]);
+
+      if([0x010F,0x0110,0xA434,0x0131].includes(tag))flags.device=true;
+      if([0x0132,0x9003,0x9004].includes(tag))flags.time=true;
+      if(tag===0x8825){flags.gps=true;parseGPS(U32(vo))}
+      if(tag===0x8769)parseIFD(U32(vo),'Exif SubIFD');
+    }
+  }
+
+  function parseGPS(off){
+    if(!off||off+2>dv.byteLength)return;
+    const count=U16(off);
+    rows.push(['GPS IFD',`${count} tags`]);
+    for(let n=0;n<count;n++){
+      const p=off+2+n*12;
+      if(p+12>dv.byteLength)break;
+      rows.push(['GPS '+hex(U16(p)),'位置情報タグ']);
+    }
+  }
+  parseIFD(first,'IFD0');
+ }catch(e){
+   rows.push(['EXIF解析エラー',e.message]);
+ }
+ return{rows,flags};
+}
+
+function parsePNG(buffer){
+ const u=new Uint8Array(buffer),rows=[],flags={exif:false,xmp:false,iptc:false,comment:false,gps:false,device:false,time:false};
+ const sig=[137,80,78,71,13,10,26,10];
+ if(sig.some((v,i)=>u[i]!==v))return{rows:[['エラー','PNGとして認識できません']],flags};
+ let i=8;
+ while(i+12<=u.length){
+  const len=(((u[i]<<24)>>>0)|(u[i+1]<<16)|(u[i+2]<<8)|u[i+3])>>>0;
+  const type=String.fromCharCode(u[i+4],u[i+5],u[i+6],u[i+7]);
+  if(i+12+len>u.length)break;
+  let d=`${len} bytes`;
+  if(type==='eXIf'){flags.exif=true;d='EXIF metadata'}
+  if(['tEXt','zTXt','iTXt'].includes(type)){
+    d=readAscii(u,i+8,Math.min(len,160))||d;
+    const low=d.toLowerCase();
+    if(low.includes('xmp'))flags.xmp=true;
+    if(low.includes('date')||low.includes('time'))flags.time=true;
+    if(low.includes('gps')||low.includes('location'))flags.gps=true;
+    if(low.includes('model')||low.includes('make')||low.includes('software'))flags.device=true;
+  }
+  rows.push([type,d]);
+  i+=12+len;
+  if(type==='IEND')break;
+ }
+ return{rows,flags};
+}
+
+function analyze(buffer,type){
+ if(type==='image/jpeg'||type==='image/jpg')return parseJPEG(buffer);
+ if(type==='image/png')return parsePNG(buffer);
+ return{rows:[['未対応形式',type||'不明']],flags:{exif:false,xmp:false,iptc:false,comment:false,gps:false,device:false,time:false}}
+}
+
+function render(el,res){
+ let h='<table><thead><tr><th>項目</th><th>内容</th></tr></thead><tbody>';
+ for(const[a,b]of res.rows)h+=`<tr><td>${esc(a)}</td><td>${esc(b)}</td></tr>`;
+ h+='</tbody></table>';
+ el.innerHTML=h;
+}
+
+function summary(el,f){
+ const arr=[['EXIF',f.exif],['GPS',f.gps],['XMP',f.xmp],['IPTC',f.iptc],['機種情報',f.device],['日時',f.time],['コメント',f.comment]];
+ el.innerHTML=arr.map(([n,v])=>`<span class="pill ${v?'bad':'ok'}">${n}: ${v?'検出':'未検出'}</span>`).join('');
+}
+
+function cleanJPEG(buffer){
+ const u=new Uint8Array(buffer),parts=[u.slice(0,2)];
+ let i=2;
+ while(i<u.length){
+  if(u[i]!==0xFF){parts.push(u.slice(i));break}
+  const start=i,marker=u[i+1];i+=2;
+  if(marker===0xD9){parts.push(u.slice(start,i));break}
+  if(marker===0xDA){
+    const len=(u[i]<<8)|u[i+1],end=i+len;
+    parts.push(u.slice(start,end));
+    parts.push(u.slice(end));
+    break;
+  }
+  if(marker===0x00||marker===0xD8||marker===0x01||(marker>=0xD0&&marker<=0xD7)){
+    parts.push(u.slice(start,i));continue;
+  }
+  const len=(u[i]<<8)|u[i+1],end=i+len;
+  const remove=(marker===0xE1||marker===0xED||marker===0xFE);
+  if(!remove)parts.push(u.slice(start,end));
+  i=end;
+ }
+ return concat(parts);
+}
+
+function cleanPNG(buffer){
+ const u=new Uint8Array(buffer),parts=[u.slice(0,8)],remove=new Set(['eXIf','tEXt','zTXt','iTXt']);
+ let i=8;
+ while(i+12<=u.length){
+  const len=(((u[i]<<24)>>>0)|(u[i+1]<<16)|(u[i+2]<<8)|u[i+3])>>>0;
+  const type=String.fromCharCode(u[i+4],u[i+5],u[i+6],u[i+7]);
+  const end=i+12+len;
+  if(!remove.has(type))parts.push(u.slice(i,end));
+  i=end;
+  if(type==='IEND')break;
+ }
+ return concat(parts);
+}
+
+$('#file').addEventListener('change',async e=>{
+ file=e.target.files?.[0];
+ if(!file)return;
+ $('#diag').textContent=`読み込み成功: ${file.name} / ${file.type||'MIME不明'} / ${fmt(file.size)}`;
+ $('#reset').disabled=false;
+ buf=await file.arrayBuffer();
+
+ if(previewURL)URL.revokeObjectURL(previewURL);
+ previewURL=URL.createObjectURL(file);
+ $('#preview').src=previewURL;
+ $('#preview').classList.remove('hidden');
+
+ const supported=['image/jpeg','image/png'].includes(file.type);
+ $('#clean').disabled=!supported;
+
+ const r=analyze(buf,file.type);
+ render($('#before'),r);
+ summary($('#beforeSummary'),r.flags);
+
+ $('#status').innerHTML=supported
+ ?'<span class="ok">解析完了。</span>'
+ :'<span class="warn">現在この形式は削除処理未対応です。</span>';
+});
+
+$('#clean').addEventListener('click',()=>{
+ try{
+  cleaned=file.type==='image/jpeg'?cleanJPEG(buf):cleanPNG(buf);
+  const blob=new Blob([cleaned],{type:file.type});
+  const r=analyze(cleaned,file.type);
+  render($('#after'),r);
+  summary($('#afterSummary'),r.flags);
+
+  if(downloadURL)URL.revokeObjectURL(downloadURL);
+  downloadURL=URL.createObjectURL(blob);
+
+  const ext=file.type==='image/png'?'.png':'.jpg';
+  const stem=file.name.replace(/\.(jpe?g|png)$/i,'');
+  $('#download').href=downloadURL;
+  $('#download').download=stem+'_clean'+ext;
+  $('#download').classList.remove('hidden');
+
+  $('#status').innerHTML=`<span class="ok">削除完了。再圧縮なし。 ${fmt(file.size)} → ${fmt(blob.size)}</span>`;
+ }catch(err){
+  $('#status').innerHTML='<span class="bad">エラー: '+esc(err.message)+'</span>';
+ }
+});
+
+$('#reset').addEventListener('click',()=>location.reload());
+</script>
+</body>
+</html>
