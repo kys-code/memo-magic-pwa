@@ -36,6 +36,10 @@ td:first-child{width:40%;color:#c7d2fe}
 .pill{display:inline-block;border:1px solid var(--line);border-radius:999px;padding:4px 8px;margin:3px;font-size:12px}
 h1{margin-bottom:4px}
 .note{padding:10px 12px;border:1px solid var(--line);border-radius:12px;background:#10182a}
+.diffbox{margin-top:14px;padding:13px;border:1px solid #3b82f6;border-radius:12px;background:#0d1a30}
+.diffbox h3{margin:0 0 8px}
+.removed{color:#fecaca;background:#3a1720;border-color:#7f1d1d}
+.diffbox table{margin-top:10px;background:#10182a;border:1px solid var(--line);border-radius:10px;overflow:hidden}
 </style>
 </head>
 <body>
@@ -58,6 +62,12 @@ h1{margin-bottom:4px}
     <button id="download" class="btn primary hidden" type="button">保存・共有</button>
   </div>
   <p id="status"></p>
+  <div id="diff" class="diffbox hidden">
+    <h3>削除された項目</h3>
+    <div id="diffCategories"></div>
+    <div id="diffDetails"></div>
+    <p class="small">画像本体と色プロファイルは保持しています。</p>
+  </div>
 </div>
 
 <div class="grid">
@@ -83,7 +93,7 @@ h1{margin-bottom:4px}
 
 <script>
 const $=s=>document.querySelector(s);
-let file=null,buf=null,cleaned=null,previewURL=null,downloadURL=null,savedBlob=null,savedName='';
+let file=null,buf=null,cleaned=null,previewURL=null,downloadURL=null,savedBlob=null,savedName='',beforeResult=null;
 
 function esc(s){return String(s).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]))}
 function fmt(n){return n<1024?n+' B':n<1048576?(n/1024).toFixed(1)+' KB':(n/1048576).toFixed(2)+' MB'}
@@ -267,6 +277,34 @@ function summary(el,f){
  el.innerHTML=arr.map(([n,v])=>`<span class="pill ${v?'bad':'ok'}">${n}: ${v?'検出':'未検出'}</span>`).join('');
 }
 
+function compareResults(before,after){
+ const labels={exif:'EXIF',gps:'GPS位置情報',xmp:'XMP',iptc:'IPTC',device:'機種情報',time:'撮影日時',comment:'コメント'};
+ const categories=Object.keys(labels).filter(k=>before.flags[k]&&!after.flags[k]).map(k=>labels[k]);
+ const remaining=new Map();
+ for(const row of after.rows){const key=JSON.stringify(row);remaining.set(key,(remaining.get(key)||0)+1)}
+ const rows=[];
+ for(const row of before.rows){
+  const key=JSON.stringify(row),count=remaining.get(key)||0;
+  if(count)remaining.set(key,count-1);else rows.push(row);
+ }
+ return{categories,rows};
+}
+
+function renderDiff(before,after){
+ const diff=compareResults(before,after);
+ $('#diffCategories').innerHTML=diff.categories.length
+  ?'<div class="small">消えたカテゴリ</div>'+diff.categories.map(n=>`<span class="pill removed">${esc(n)}</span>`).join('')
+  :'<span class="pill ok">検出カテゴリの変化なし</span>';
+ let h='<div class="small" style="margin-top:10px">消えた具体的な項目</div>';
+ if(diff.rows.length){
+  h+='<table><thead><tr><th>項目</th><th>削除された内容</th></tr></thead><tbody>';
+  for(const[a,b]of diff.rows)h+=`<tr><td>${esc(a)}</td><td>${esc(b)}</td></tr>`;
+  h+='</tbody></table>';
+ }else h+='<p class="small">個別の削除項目はありません。</p>';
+ $('#diffDetails').innerHTML=h;
+ $('#diff').classList.remove('hidden');
+}
+
 function cleanJPEG(buffer){
  const u=new Uint8Array(buffer),parts=[u.slice(0,2)];
  let i=2;
@@ -308,6 +346,11 @@ function cleanPNG(buffer){
 $('#file').addEventListener('change',async e=>{
  file=e.target.files?.[0];
  if(!file)return;
+ beforeResult=null;savedBlob=null;savedName='';
+ $('#download').classList.add('hidden');
+ $('#diff').classList.add('hidden');
+ $('#afterSummary').innerHTML='';
+ $('#after').innerHTML='<p class="small" style="padding:10px">削除後に再解析します。</p>';
  $('#diag').textContent=`読み込み成功: ${file.name} / ${file.type||'MIME不明'} / ${fmt(file.size)}`;
  $('#reset').disabled=false;
  try{buf=await file.arrayBuffer()}catch(err){
@@ -325,6 +368,7 @@ $('#file').addEventListener('change',async e=>{
  $('#clean').disabled=!supported;
 
  const r=analyze(buf,detected);
+ beforeResult=r;
  render($('#before'),r);
  summary($('#beforeSummary'),r.flags);
 
@@ -351,6 +395,7 @@ $('#clean').addEventListener('click',async()=>{
   const r=analyze(cleaned,outType);
   render($('#after'),r);
   summary($('#afterSummary'),r.flags);
+  if(beforeResult)renderDiff(beforeResult,r);
 
   if(downloadURL)URL.revokeObjectURL(downloadURL);
   downloadURL=URL.createObjectURL(blob);
