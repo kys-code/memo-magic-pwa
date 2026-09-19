@@ -55,7 +55,7 @@ h1{margin-bottom:4px}
   <div class="actions">
     <button id="clean" class="primary" disabled>メタデータを削除</button>
     <button id="reset" class="secondary" disabled>リセット</button>
-    <a id="download" class="btn primary hidden">削除済み画像を保存</a>
+    <button id="download" class="btn primary hidden" type="button">保存・共有</button>
   </div>
   <p id="status"></p>
 </div>
@@ -83,7 +83,7 @@ h1{margin-bottom:4px}
 
 <script>
 const $=s=>document.querySelector(s);
-let file=null,buf=null,cleaned=null,previewURL=null,downloadURL=null;
+let file=null,buf=null,cleaned=null,previewURL=null,downloadURL=null,savedBlob=null,savedName='';
 
 function esc(s){return String(s).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]))}
 function fmt(n){return n<1024?n+' B':n<1048576?(n/1024).toFixed(1)+' KB':(n/1048576).toFixed(2)+' MB'}
@@ -92,7 +92,8 @@ function readAscii(u,start,len){let s='';for(let i=0;i<len&&start+i<u.length;i++
 function hex(n,w=4){return '0x'+n.toString(16).toUpperCase().padStart(w,'0')}
 
 function parseJPEG(buffer){
- const u=new Uint8Array(buffer),rows=[],flags={exif:false,xmp:false,iptc:false,comment:false,gps:false,device:false,time:false};
+ const u=new Uint8Array(buffer),rows=[];
+ let flags={exif:false,xmp:false,iptc:false,comment:false,gps:false,device:false,time:false};
  if(u[0]!==0xFF||u[1]!==0xD8)return{rows:[['エラー','JPEGとして認識できません']],flags};
  let i=2;
  while(i+3<u.length){
@@ -356,15 +357,32 @@ $('#clean').addEventListener('click',async()=>{
 
   const ext=outType==='image/png'?'.png':'.jpg';
   const stem=file.name.replace(/\.(jpe?g|png|heic|heif)$/i,'');
-  $('#download').href=downloadURL;
-  $('#download').download=stem+'_clean'+ext;
+  savedBlob=blob;
+  savedName=stem+'_clean'+ext;
   $('#download').classList.remove('hidden');
 
-  $('#status').innerHTML=`<span class="ok">削除完了。${recompressed?'JPEGへ変換しました。':'再圧縮なし。'} ${fmt(file.size)} → ${fmt(blob.size)}</span>`;
+  $('#status').innerHTML=`<span class="ok">削除完了。${recompressed?'JPEGへ変換しました。':'再圧縮なし。'} ${fmt(file.size)} → ${fmt(blob.size)}<br>「保存・共有」を押してください。</span>`;
  }catch(err){
   $('#status').innerHTML='<span class="bad">エラー: '+esc(err.message)+'</span>';
  }finally{
   $('#clean').disabled=false;
+ }
+});
+
+$('#download').addEventListener('click',async()=>{
+ if(!savedBlob)return;
+ try{
+  const shareFile=new File([savedBlob],savedName,{type:savedBlob.type||'image/jpeg'});
+  if(navigator.share&&(!navigator.canShare||navigator.canShare({files:[shareFile]}))){
+   await navigator.share({files:[shareFile],title:'メタデータ削除済み画像'});
+   $('#status').innerHTML='<span class="ok">共有画面を開きました。「画像を保存」を選んでください。</span>';
+   return;
+  }
+  const opened=window.open(downloadURL,'_blank');
+  if(!opened)location.href=downloadURL;
+  $('#status').innerHTML='<span class="ok">画像を開きました。画像を長押しして保存してください。</span>';
+ }catch(err){
+  if(err.name!=='AbortError')$('#status').innerHTML='<span class="bad">保存を開けませんでした: '+esc(err.message)+'</span>';
  }
 });
 
