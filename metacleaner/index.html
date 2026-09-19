@@ -45,10 +45,10 @@ h1{margin-bottom:4px}
 
 <div class="card">
   <div class="note small">
-    JPEG / PNG対応。JPEGは再圧縮せず、EXIF・GPS・XMP・IPTC・コメント領域を削除します。
+    JPEG / PNG / HEIC対応。JPEG・PNGは再圧縮せず、HEICはJPEGへ端末内変換してメタデータを削除します。
   </div>
   <div style="margin-top:12px">
-    <input id="file" type="file" accept="image/jpeg,image/png,.jpg,.jpeg,.png">
+    <input id="file" type="file" accept="image/*,.heic,.heif">
   </div>
   <div id="diag" class="small" style="margin-top:10px">写真を選択してください</div>
   <img id="preview" class="preview hidden" alt="">
@@ -224,6 +224,36 @@ function analyze(buffer,type){
  return{rows:[['未対応形式',type||'不明']],flags:{exif:false,xmp:false,iptc:false,comment:false,gps:false,device:false,time:false}}
 }
 
+function detectType(buffer,fallback=''){
+ const u=new Uint8Array(buffer);
+ if(u.length>=3&&u[0]===0xFF&&u[1]===0xD8&&u[2]===0xFF)return'image/jpeg';
+ if(u.length>=8&&u[0]===137&&u[1]===80&&u[2]===78&&u[3]===71)return'image/png';
+ return fallback;
+}
+
+function canvasJPEG(source){
+ return new Promise((resolve,reject)=>{
+  const img=new Image();
+  const url=URL.createObjectURL(source);
+  img.onload=()=>{
+   try{
+    const canvas=document.createElement('canvas');
+    canvas.width=img.naturalWidth;
+    canvas.height=img.naturalHeight;
+    const ctx=canvas.getContext('2d');
+    if(!ctx)throw new Error('画像処理を開始できませんでした');
+    ctx.drawImage(img,0,0);
+    canvas.toBlob(blob=>{
+     URL.revokeObjectURL(url);
+     blob?resolve(blob):reject(new Error('JPEG変換に失敗しました'));
+    },'image/jpeg',0.95);
+   }catch(err){URL.revokeObjectURL(url);reject(err)}
+  };
+  img.onerror=()=>{URL.revokeObjectURL(url);reject(new Error('この写真形式を読み込めませんでした'))};
+  img.src=url;
+ });
+}
+
 function render(el,res){
  let h='<table><thead><tr><th>項目</th><th>内容</th></tr></thead><tbody>';
  for(const[a,b]of res.rows)h+=`<tr><td>${esc(a)}</td><td>${esc(b)}</td></tr>`;
@@ -279,45 +309,62 @@ $('#file').addEventListener('change',async e=>{
  if(!file)return;
  $('#diag').textContent=`読み込み成功: ${file.name} / ${file.type||'MIME不明'} / ${fmt(file.size)}`;
  $('#reset').disabled=false;
- buf=await file.arrayBuffer();
+ try{buf=await file.arrayBuffer()}catch(err){
+  $('#status').innerHTML='<span class="bad">写真の読み込みに失敗しました。もう一度選択してください。</span>';
+  return;
+ }
 
  if(previewURL)URL.revokeObjectURL(previewURL);
  previewURL=URL.createObjectURL(file);
  $('#preview').src=previewURL;
  $('#preview').classList.remove('hidden');
 
- const supported=['image/jpeg','image/png'].includes(file.type);
+ const detected=detectType(buf,file.type);
+ const supported=['image/jpeg','image/png'].includes(detected)||file.type.startsWith('image/')||/\.(heic|heif)$/i.test(file.name);
  $('#clean').disabled=!supported;
 
- const r=analyze(buf,file.type);
+ const r=analyze(buf,detected);
  render($('#before'),r);
  summary($('#beforeSummary'),r.flags);
 
  $('#status').innerHTML=supported
- ?'<span class="ok">解析完了。</span>'
+ ?(['image/jpeg','image/png'].includes(detected)
+   ?'<span class="ok">解析完了。「メタデータを削除」を押してください。</span>'
+   :'<span class="ok">写真を読み込みました。JPEGへ変換してメタデータを削除できます。</span>')
  :'<span class="warn">現在この形式は削除処理未対応です。</span>';
 });
 
-$('#clean').addEventListener('click',()=>{
+$('#clean').addEventListener('click',async()=>{
  try{
-  cleaned=file.type==='image/jpeg'?cleanJPEG(buf):cleanPNG(buf);
-  const blob=new Blob([cleaned],{type:file.type});
-  const r=analyze(cleaned,file.type);
+  $('#clean').disabled=true;
+  $('#status').innerHTML='<span class="warn">処理中です…</span>';
+  const detected=detectType(buf,file.type);
+  let blob,outType,recompressed=false;
+  if(detected==='image/jpeg'){
+   cleaned=cleanJPEG(buf);outType='image/jpeg';blob=new Blob([cleaned],{type:outType});
+  }else if(detected==='image/png'){
+   cleaned=cleanPNG(buf);outType='image/png';blob=new Blob([cleaned],{type:outType});
+  }else{
+   blob=await canvasJPEG(file);outType='image/jpeg';cleaned=await blob.arrayBuffer();recompressed=true;
+  }
+  const r=analyze(cleaned,outType);
   render($('#after'),r);
   summary($('#afterSummary'),r.flags);
 
   if(downloadURL)URL.revokeObjectURL(downloadURL);
   downloadURL=URL.createObjectURL(blob);
 
-  const ext=file.type==='image/png'?'.png':'.jpg';
-  const stem=file.name.replace(/\.(jpe?g|png)$/i,'');
+  const ext=outType==='image/png'?'.png':'.jpg';
+  const stem=file.name.replace(/\.(jpe?g|png|heic|heif)$/i,'');
   $('#download').href=downloadURL;
   $('#download').download=stem+'_clean'+ext;
   $('#download').classList.remove('hidden');
 
-  $('#status').innerHTML=`<span class="ok">削除完了。再圧縮なし。 ${fmt(file.size)} → ${fmt(blob.size)}</span>`;
+  $('#status').innerHTML=`<span class="ok">削除完了。${recompressed?'JPEGへ変換しました。':'再圧縮なし。'} ${fmt(file.size)} → ${fmt(blob.size)}</span>`;
  }catch(err){
   $('#status').innerHTML='<span class="bad">エラー: '+esc(err.message)+'</span>';
+ }finally{
+  $('#clean').disabled=false;
  }
 });
 
